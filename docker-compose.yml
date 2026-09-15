@@ -1,0 +1,104 @@
+# Three services, one image. This file IS the failure-isolation argument from
+# the design made concrete: `speech` can be stopped, restarted or OOM-killed and
+# `core` plus `ui` keep serving text chat.
+#
+# Try it: `docker compose stop speech` — the UI hides the microphone and text
+# questions keep working. That is the degradation contract, demonstrable in one
+# command rather than asserted in a slide.
+#
+# NOT YET BUILT OR RUN — Docker is unavailable on the development machine. See
+# the note at the top of the Dockerfile.
+
+services:
+  # ---------------------------------------------------------------------
+  # Speech: ASR + TTS. Separate because it holds the heaviest models, has the
+  # slowest cold start, and is the most likely to be OOM-killed. Nothing else
+  # should die with it.
+  # ---------------------------------------------------------------------
+  speech:
+    build: .
+    image: te-assistant:latest
+    command: python -m te_assistant.speech.service
+    ports:
+      - "8001:8001"
+    environment:
+      TE_PROFILE: "${TE_PROFILE:-cpu-lite}"
+      TE_SPEECH_HOST: "0.0.0.0"
+    volumes:
+      - models:/models
+      - ./data:/data
+    healthcheck:
+      # Liveness only — deliberately does not trigger a model load, or the
+      # container would look unhealthy while it is starting correctly.
+      test: ["CMD", "curl", "-fsS", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          # Whisper small int8 plus a Piper voice fits comfortably; the cap is
+          # what makes an OOM hit *this* container instead of the host.
+          memory: 4G
+
+  # ---------------------------------------------------------------------
+  # Core: retrieval, guardrails, PII, intent, actions, sessions.
+  # Deliberately NOT split further — these share the session store and the
+  # vector index, so separating them would add network hops and no isolation.
+  # ---------------------------------------------------------------------
+  core:
+    build: .
+    image: te-assistant:latest
+    command: python -m te_assistant.api
+    ports:
+      - "8000:8000"
+    environment:
+      TE_PROFILE: "${TE_PROFILE:-cpu-lite}"
+      TE_CORE_HOST: "0.0.0.0"
+      TE_SPEECH_URL: "http://speech:8001"
+    volumes:
+      - models:/models
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 6G
+    # No `depends_on: speech`. Core must start and serve text chat whether or
+    # not speech is up — encoding a hard dependency here would contradict the
+    # whole reason the services are split.
+
+  # ---------------------------------------------------------------------
+  # UI: thin Gradio client. Holds no models and talks to core over HTTP, so a
+  # backend restart does not take the page down.
+  # ---------------------------------------------------------------------
+  ui:
+    build: .
+    image: te-assistant:latest
+    command: python -m te_assistant.ui.gradio_app --port 7860
+    ports:
+      - "7860:7860"
+    environment:
+      TE_CORE_URL: "http://core:8000"
+      TE_SPEECH_URL: "http://speech:8001"
+    depends_on:
+      core:
+        condition: service_started
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+volumes:
+  # Model weights live here, not in the image. Populate once with:
+  #   docker compose run --rm core python scripts/fetch_models.py
+  models:

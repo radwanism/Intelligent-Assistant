@@ -1,0 +1,149 @@
+[project]
+name = "te-assistant"
+version = "0.1.0"
+description = "Telecom Egypt Intelligent Assistant — bilingual (AR/EN/Egyptian dialect) voice+text RAG assistant that runs fully on-premises."
+readme = "README.md"
+# 3.11+ generally. The CPU profile additionally needs 3.11 specifically *on
+# Windows*, because the only prebuilt llama-cpp-python wheels for Windows target
+# cp311 — but that is a constraint on the `cpu` extra, not on the project, and
+# pinning it here made the package uninstallable on Colab (Python 3.13).
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+# --------------------------------------------------------------------------
+# Core dependencies: the `cpu-lite` profile.
+# Deliberately TORCH-FREE — CTranslate2 + ONNX Runtime + llama.cpp only.
+# This keeps the install ~1.5 GB instead of ~4.5 GB, which is what makes the
+# on-premises claim credible and fits the 10.3 GB dev machine (B.3).
+# --------------------------------------------------------------------------
+dependencies = [
+    # --- service layer ---
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "httpx>=0.27",
+    "python-multipart>=0.0.12",   # file uploads
+
+    # --- UI ---
+    "gradio>=5.9",
+
+    # --- ingestion / crawl ---
+    "selectolax>=0.3.21",         # fast HTML parsing (no lxml build needed)
+    "trafilatura>=1.12",          # boilerplate removal — load-bearing, see plan
+    "tenacity>=9.0",
+
+    # --- retrieval ---
+    "chromadb>=0.5.20",
+    "rank-bm25>=0.2.2",
+    "fastembed>=0.4.2",           # ONNX embeddings, no torch
+
+    "huggingface-hub>=0.26",
+
+    # --- speech ---
+    "faster-whisper>=1.1",        # CTranslate2, no torch
+    "piper-tts>=1.2",
+    "soundfile>=0.12",
+    "numpy>=1.26",
+
+    # --- documents ---
+    "pypdf>=5.1",
+    "python-docx>=1.1",
+    "pillow>=11.0",
+    # Lower bound only. 1.3.x/1.4.x exist for 3.11 but the newest release for
+    # Python 3.13 is 1.2.3, so a `>=1.3.24` pin made the whole project
+    # uninstallable on Colab — and because pip resolution is all-or-nothing,
+    # that one line took every other dependency down with it. The API used here
+    # (`RapidOCR()(image) -> (result, elapsed)`) is stable across both.
+    "rapidocr-onnxruntime>=1.2.3",
+
+    # --- misc ---
+    "orjson>=3.10",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+# `cpu-lite` profile: the local LLM runtime. An extra rather than a core
+# dependency because the GPU profile never loads llama.cpp (it uses
+# transformers/AWQ), and llama-cpp-python is the single hardest package to
+# install — keeping it out of the core means one platform's wheel problem cannot
+# block every other dependency.
+#
+# PyPI ships it as an sdist ONLY, so a plain install triggers a CMake/C++ build.
+# That fails without a compiler, and on Windows also trips the 260-char MAX_PATH
+# limit while unpacking the vendored llama.cpp tree. Prebuilt wheels live on the
+# project's own index, wired up under [[tool.uv.index]] below; 0.3.19 is the
+# newest cp311 win_amd64 wheel published there, hence the upper bound and the
+# Python 3.11 requirement *on Windows specifically*.
+cpu = [
+    "llama-cpp-python>=0.3.2,<=0.3.19",
+]
+
+# `gpu-colab` profile: installed on Colab only. Pulls torch, so never part of
+# the on-prem baseline install.
+gpu = [
+    "torch>=2.4",
+    "transformers>=4.46",
+    "sentence-transformers>=3.3",
+    "FlagEmbedding>=1.3",          # BGE-M3 + bge-reranker-v2-m3
+    "autoawq>=0.2.7",              # Qwen3-8B-AWQ
+    "accelerate>=1.1",
+]
+
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "jiwer>=3.0",                  # WER for the ASR eval
+    "ruff>=0.8",
+    "python-pptx>=1.0",            # scripts/make_presentation.py (A.5 deliverable)
+]
+
+[project.scripts]
+te-ingest = "te_assistant.ingest.build_index:main"
+te-core = "te_assistant.api:main"
+te-speech = "te_assistant.speech.service:main"
+te-ui = "te_assistant.ui.gradio_app:main"
+
+# Prebuilt CPU wheels for llama-cpp-python (see the note on that dependency).
+# `explicit = true` confines this index to the one package that names it below —
+# a global extra-index-url would make the resolver probe this index for every
+# dependency, which is both slow and a supply-chain risk.
+[[tool.uv.index]]
+name = "llama-cpp-cpu"
+url = "https://abetlen.github.io/llama-cpp-python/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+llama-cpp-python = { index = "llama-cpp-cpu" }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/te_assistant"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = [
+    # `class Foo(str, Enum)` rather than `StrEnum`. Both work on 3.11, but the
+    # explicit str base is what pydantic serialisation is tested against here,
+    # and swapping it is not worth the risk for a style preference.
+    "UP042",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI's dependency-injection idiom IS a function call in a default argument
+# (`Depends(...)`, `File(...)`, `Form(...)`). B008 is a true positive in general
+# and a false one for every FastAPI route ever written.
+"src/te_assistant/api.py" = ["B008"]
+"src/te_assistant/speech/service.py" = ["B008"]

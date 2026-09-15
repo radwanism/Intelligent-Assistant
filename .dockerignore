@@ -1,0 +1,27 @@
+# The venv is platform-specific and would bloat the build context by ~800 MB.
+smart_assistant/
+.venv/
+venv/
+
+# Raw crawl HTML is ~150 MB and is only an input to the cleaning stage; the
+# cleaned corpus and the built index are what the image actually needs.
+data/corpus/raw.jsonl
+data/sessions/
+data/chroma/*.sqlite3-wal
+data/chroma/*.sqlite3-shm
+data/traces.jsonl
+data/assistant.db*
+
+# Model weights are mounted as a volume, never baked in.
+models/
+*.gguf
+*.onnx
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.git/
+.gitignore
+notebooks/.ipynb_checkpoints/

@@ -1,0 +1,38 @@
+{"question": "رقم خدمة عملاء المصرية للاتصالات كام؟", "language": "arz", "expected_url_contains": ["/about-te/faq"], "note": "customer service 111 is in the FAQ codes table"}
+{"question": "ازاي أشحن رصيد الخط بتاعي؟", "language": "arz", "expected_url_contains": ["/about-te/faq", "/marhaba", "/we-ardy-prepaid"], "note": "*555* recharge code"}
+{"question": "عايز أعرف رصيدي كام", "language": "arz", "expected_url_contains": ["/about-te/faq", "/marhaba"], "note": "*550# balance"}
+{"question": "إزاي أعرف رقم الخط بتاعي؟", "language": "arz", "expected_url_contains": ["/about-te/faq", "/marhaba"], "note": "*688#"}
+{"question": "عايز أعرف باقات الإنترنت المنزلي", "language": "arz", "expected_url_contains": ["/we-internet", "/home", "/faq/fixed-broadband", "/one-home"]}
+{"question": "ايه هي خدمة WE Bonus وازاي أستخدم النقط؟", "language": "arz", "expected_url_contains": ["/we-bonus"]}
+{"question": "عايز أستبدل نقاط WE Bonus من الفرع", "language": "arz", "expected_url_contains": ["/we-bonus"]}
+{"question": "ازاي أفعل الرقابة الأبوية على النت؟", "language": "arz", "expected_url_contains": ["/parental-control"]}
+{"question": "ايه هو الـ eKYC ولزمته ايه؟", "language": "mixed", "expected_url_contains": ["/ekyc"]}
+{"question": "عايز أعرف عن باقات WE Air", "language": "mixed", "expected_url_contains": ["/we-air"]}
+{"question": "ايه هي خدمة WE Pay؟", "language": "mixed", "expected_url_contains": ["/we-pay"]}
+{"question": "عايز أعرف عن الخط الأرضي مسبق الدفع", "language": "arz", "expected_url_contains": ["/we-ardy-prepaid", "/faq/fixed-voice"]}
+{"question": "ازاي أطلب خط أرضي جديد؟", "language": "arz", "expected_url_contains": ["/faq/fixed-voice", "/we-landline", "/new-landline"]}
+{"question": "عايز أنقل ملكية الخط الأرضي", "language": "arz", "expected_url_contains": ["/faq/fixed-voice"]}
+{"question": "ايه هي خدمة كلامي؟", "language": "arz", "expected_url_contains": ["/kalamy"]}
+{"question": "عايز أعرف عن باقات الجيل الخامس للموبايل", "language": "arz", "expected_url_contains": ["/5g"]}
+{"question": "ازاي أوقف الخط مؤقتاً؟", "language": "arz", "expected_url_contains": ["/park-your-line", "/faq/fixed-voice"]}
+{"question": "فين فروع WE في الساحل؟", "language": "arz", "expected_url_contains": ["/sahel-stores", "/store-locator"]}
+{"question": "ما هي خدمة الجيل الخامس للإنترنت المنزلي؟", "language": "ar", "expected_url_contains": ["/home-5g", "/5g"]}
+{"question": "ما هي شروط التعاقد مع المصرية للاتصالات؟", "language": "ar", "expected_url_contains": ["/Contractual-Terms"]}
+{"question": "ما هي سرعات الإنترنت الأرضي المتاحة؟", "language": "ar", "expected_url_contains": ["/faq/fixed-broadband", "/about-te/faq", "/we-internet"]}
+{"question": "ما هي خدمات تليجرام المتاحة؟", "language": "ar", "expected_url_contains": ["/telegram-services"]}
+{"question": "ما هي باقات OneHome؟", "language": "ar", "expected_url_contains": ["/one-home"]}
+{"question": "كيف يمكنني تفعيل خدمة الرقابة الأبوية على الإنترنت الأرضي؟", "language": "ar", "expected_url_contains": ["/parental-control", "/fbb-parental-control"]}
+{"question": "ما هي باقات نيترو برايم؟", "language": "ar", "expected_url_contains": ["/nitro"]}
+{"question": "ما هي خدمة الرقم المجاني للشركات؟", "language": "ar", "expected_url_contains": ["/toll-free", "/te-business"]}
+{"question": "What is the customer service number for Telecom Egypt?", "language": "en", "expected_url_contains": ["/about-te/faq", "/contact-us"]}
+{"question": "How do I recharge my prepaid line?", "language": "en", "expected_url_contains": ["/about-te/faq", "/marhaba", "/we-ardy-prepaid"]}
+{"question": "What are the WE 5G home internet plans?", "language": "en", "expected_url_contains": ["/home-5g", "/5g"]}
+{"question": "How does the WE Bonus loyalty programme work?", "language": "en", "expected_url_contains": ["/we-bonus"]}
+{"question": "What is eKYC and why is it required?", "language": "en", "expected_url_contains": ["/ekyc"]}
+{"question": "How can I enable parental control on my internet?", "language": "en", "expected_url_contains": ["/parental-control"]}
+{"question": "What is WE Pay?", "language": "en", "expected_url_contains": ["/we-pay"]}
+{"question": "How do I request a new landline?", "language": "en", "expected_url_contains": ["/faq/fixed-voice", "/we-landline", "/new-landline"]}
+{"question": "What are the contractual terms and conditions?", "language": "en", "expected_url_contains": ["/Contractual-Terms"]}
+{"question": "Tell me about WE Air packages", "language": "en", "expected_url_contains": ["/we-air"]}
+{"question": "عايز أعرف الـ 5G packages بكام", "language": "mixed", "expected_url_contains": ["/5g", "/nitro"]}
+{"question": "ازاي أعمل top up للخط؟", "language": "mixed", "expected_url_contains": ["/topup", "/about-te/faq", "/marhaba"]}

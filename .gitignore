@@ -1,0 +1,53 @@
+# Virtual environment
+smart_assistant/
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# --- data: what is committed and what is not -------------------------------
+# COMMITTED on purpose, and this is what makes the Colab path work:
+#   data/corpus/te_eg.jsonl   the cleaned corpus (~740 KB)
+#   data/chroma/              the built vector index (~10 MB)
+#   data/eval/golden_set.jsonl
+# A fresh clone can answer questions without re-crawling or re-embedding.
+
+# NOT committed: raw crawl HTML is ~150 MB and is only an input to cleaning.
+data/corpus/raw.jsonl
+
+# Runtime state — per-machine, and session files may contain customer uploads.
+data/sessions/
+data/traces.jsonl
+data/assistant.db
+data/assistant.db-*
+data/demo_notebook.db*
+data/chroma/*.sqlite3-wal
+data/chroma/*.sqlite3-shm
+
+# Eval outputs are regenerated; keep the inputs, not the results.
+data/eval/results/
+data/eval/audio/*.wav
+data/eval/audio/*.mp3
+data/eval/audio/*.m4a
+
+# Model weights — fetched via scripts/fetch_models.py, never committed.
+models/
+*.gguf
+*.onnx
+*.onnx.json
+
+# Logs
+logs/
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
