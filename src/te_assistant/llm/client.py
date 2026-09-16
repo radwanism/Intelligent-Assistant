@@ -100,17 +100,40 @@ class TransformersLLM:
     """GPU backend: Qwen3-8B-AWQ. fp16 only — a T4 is Turing, no bf16."""
 
     def __init__(self, settings: Settings) -> None:
+        import inspect
+
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         repo = settings.slots.llm_repo
         self._tokenizer = AutoTokenizer.from_pretrained(repo)
-        self._model = AutoModelForCausalLM.from_pretrained(
-            repo, torch_dtype=torch.float16, device_map="auto"
-        )
+
+        # `torch_dtype` was renamed to `dtype`. Passing the old name still works
+        # but warns; passing the new one breaks older transformers. Pick by
+        # signature so the same code is correct on both.
+        params = inspect.signature(AutoModelForCausalLM.from_pretrained).parameters
+        dtype_key = "dtype" if "dtype" in params else "torch_dtype"
+        kwargs = {dtype_key: torch.float16, "device_map": "auto"}
+
+        try:
+            self._model = AutoModelForCausalLM.from_pretrained(repo, **kwargs)
+        except ImportError as exc:
+            # Quantised repos need a separate backend, and which one changes
+            # between transformers releases — AWQ now routes through gptqmodel,
+            # so autoawq alone is no longer enough. An fp16 repo needs none of
+            # it, which is why the default is unquantised.
+            if any(tag in repo.upper() for tag in ("AWQ", "GPTQ", "-4BIT", "-8BIT")):
+                raise ImportError(
+                    f"{exc}\n"
+                    f"{repo!r} is a quantised checkpoint and needs a quantisation "
+                    f"backend. An unquantised model avoids that entirely:\n"
+                    f"    TE_LLM_REPO=Qwen/Qwen3-4B    (fp16, ~8 GB, fits a T4)"
+                ) from exc
+            raise
+
         self._model.eval()
         self._torch = torch
-        log.info("transformers loaded %s", repo)
+        log.info("transformers loaded %s (%s=float16)", repo, dtype_key)
 
     def _prepare(self, messages: list[dict[str, str]]):
         text = self._tokenizer.apply_chat_template(
@@ -206,21 +229,75 @@ _INSTANCE: LLM | None = None
 _INSTANCE_LOCK = threading.Lock()
 
 
+def release_llm() -> None:
+    """Drop the loaded model and free its GPU memory.
+
+    The LLM is a process-wide singleton, so this is also how you retry after a
+    failed load: without it, `get_llm` returns the cached failure rather than
+    attempting again with different settings.
+    """
+    global _INSTANCE
+    with _INSTANCE_LOCK:
+        _INSTANCE = None
+    try:
+        import gc
+
+        import torch
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
+
+
 def get_llm(settings: Settings | None = None) -> LLM:
-    """Process-wide singleton. Loading a model per request would be fatal on CPU."""
+    """Process-wide singleton. Loading a model per request would be fatal on CPU.
+
+    The GPU path falls back to llama.cpp, but only when llama.cpp is actually
+    installed. It usually is not: `[gpu]` does not pull `llama-cpp-python`,
+    because the GPU profile has no use for it. Blindly falling back therefore
+    replaced a diagnosable transformers error with
+    `ModuleNotFoundError: No module named 'llama_cpp'`, which arrived at the
+    caller as a bare HTTP 500 and named neither real cause.
+
+    So a failure on both backends now raises one error that names both.
+    """
     global _INSTANCE
     settings = settings or get_settings()
     if _INSTANCE is not None:
         return _INSTANCE
+
     with _INSTANCE_LOCK:
         if _INSTANCE is not None:
             return _INSTANCE
-        if settings.profile is Profile.GPU_COLAB:
+
+        # Compare by value, not identity: if the package has been imported twice
+        # under different names (`te_assistant` and `src.te_assistant`), there
+        # are two distinct Profile enums and `is` silently reports False.
+        if settings.profile.value == Profile.GPU_COLAB.value:
             try:
                 _INSTANCE = TransformersLLM(settings)
-            except Exception as exc:
-                log.warning("GPU backend unavailable (%s); falling back to llama.cpp", exc)
-                _INSTANCE = LlamaCppLLM(settings)
+                return _INSTANCE
+            except Exception as gpu_exc:
+                log.warning(
+                    "GPU backend (%s) failed to load: %s: %s",
+                    settings.slots.llm_repo, type(gpu_exc).__name__, gpu_exc,
+                )
+                try:
+                    _INSTANCE = LlamaCppLLM(settings)
+                    log.warning("fell back to llama.cpp")
+                    return _INSTANCE
+                except ImportError as cpu_exc:
+                    raise RuntimeError(
+                        f"No LLM backend could be loaded on the "
+                        f"{settings.profile.value} profile.\n"
+                        f"  GPU  ({settings.slots.llm_repo}): "
+                        f"{type(gpu_exc).__name__}: {gpu_exc}\n"
+                        f"  CPU  (llama.cpp fallback): {cpu_exc}\n"
+                        f"Fix the GPU error above, or install the CPU backend "
+                        f"as well:  pip install llama-cpp-python"
+                    ) from gpu_exc
         else:
             _INSTANCE = LlamaCppLLM(settings)
     return _INSTANCE

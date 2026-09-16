@@ -52,6 +52,21 @@ class OnnxEmbedder:
 
         from fastembed import TextEmbedding
 
+        supported = {m["model"] for m in TextEmbedding.list_supported_models()}
+        if model_name not in supported:
+            # fastembed only serves models it has converted to ONNX. Reaching
+            # here with e.g. BAAI/bge-m3 means the wrong backend was selected
+            # for the profile, so say that rather than let fastembed raise a
+            # bare "not supported" from inside its constructor.
+            raise ValueError(
+                f"{model_name!r} is not available through fastembed, so it "
+                f"cannot run on the ONNX (CPU) backend.\n"
+                f"It is a GPU-profile model — check TE_PROFILE and that "
+                f"FlagEmbedding is installed.\n"
+                f"CPU-capable multilingual options: "
+                f"{sorted(m for m in supported if 'multilingual' in m)}"
+            )
+
         self.dim = dim
         self.model_name = model_name
         self._asymmetric = "e5" in model_name.lower()
@@ -95,6 +110,28 @@ class BGEM3Embedder:
 _CACHE: dict[str, Embedder] = {}
 
 
+def release_embedder() -> None:
+    """Drop the cached embedder and free its GPU memory.
+
+    Needed because models are process-wide singletons and the services run in
+    their *own* processes. A notebook that walks through the pipeline in-kernel
+    and then launches the services double-loads every model — on a 16 GB T4 the
+    second load dies with CUDA OOM while the first copy sits idle in a kernel
+    nobody is using for inference any more.
+    """
+    _CACHE.clear()
+    try:
+        import gc
+
+        import torch
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass  # cpu-lite is torch-free; nothing to release
+
+
 def get_embedder(settings: Settings | None = None) -> Embedder:
     settings = settings or get_settings()
     key = f"{settings.profile.value}:{settings.slots.embedder}"
@@ -102,7 +139,13 @@ def get_embedder(settings: Settings | None = None) -> Embedder:
         return _CACHE[key]
 
     slots = settings.slots
-    if settings.profile is Profile.GPU_COLAB:
+    # Compare by value, not identity. If the package has been imported twice
+    # under different names (`te_assistant` and `src.te_assistant`), there are
+    # two distinct Profile enums and `is` silently reports False — which sent a
+    # BGE-M3 model name into the ONNX backend, where fastembed does not support
+    # it. The symptom was a ValueError about an unsupported model on a profile
+    # that had already printed "gpu-colab".
+    if settings.profile.value == Profile.GPU_COLAB.value:
         try:
             embedder: Embedder = BGEM3Embedder(slots.embedder, slots.embed_dim)
         except Exception as exc:

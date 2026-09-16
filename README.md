@@ -205,7 +205,7 @@ One codebase, two runtime profiles, selected automatically by device detection:
 | ASR | faster-whisper `small`, int8 | faster-whisper `large-v3`, fp16 |
 | Embeddings | `multilingual-e5-small` (ONNX) | `BAAI/bge-m3` |
 | Reranker | off — RRF ordering is final | `BAAI/bge-reranker-v2-m3` |
-| LLM | `Qwen2.5-3B-Instruct` Q4\_K\_M | `Qwen3-8B-AWQ` |
+| LLM | `Qwen2.5-3B-Instruct` Q4\_K\_M | `Qwen3-4B` |
 | TTS | Piper | Piper |
 
 Override with `TE_PROFILE=cpu-lite` or `TE_PROFILE=gpu-colab`. Forcing `cpu-lite` on a GPU
@@ -220,7 +220,7 @@ profile.
 
 | Model | License |
 |---|---|
-| Qwen2.5-3B-Instruct / Qwen3-8B-AWQ | Apache-2.0 |
+| Qwen2.5-3B-Instruct / Qwen3-4B | Apache-2.0 |
 | multilingual-e5-small | MIT |
 | BAAI/bge-m3, bge-reranker-v2-m3 | MIT / Apache-2.0 |
 | faster-whisper (Systran) | MIT |

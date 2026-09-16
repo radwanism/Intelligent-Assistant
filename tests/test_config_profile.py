@@ -143,3 +143,66 @@ def test_cpu_profile_has_no_reranker() -> None:
     """Documented cut: too slow on 4 cores, falls back to RRF ordering."""
     assert CPU_SLOTS.reranker is None
     assert GPU_SLOTS.reranker is not None
+
+
+def test_gpu_llm_needs_no_quantisation_backend() -> None:
+    """The default GPU model must not be a quantised checkpoint.
+
+    Qwen3-8B-AWQ failed to load because recent transformers routes AWQ through
+    `gptqmodel`, so `autoawq` alone is no longer sufficient. An fp16 repo has no
+    such dependency, and which backend a quantised format needs keeps changing
+    between releases — so the default stays unquantised.
+    """
+    repo = GPU_SLOTS.llm_repo.upper()
+    for tag in ("AWQ", "GPTQ", "-4BIT", "-8BIT", "-INT4", "-INT8"):
+        assert tag not in repo, (
+            f"{GP_REPO_HINT} (found {tag!r} in {GPU_SLOTS.llm_repo!r})"
+        )
+
+
+GP_REPO_HINT = (
+    "the default GPU model must not be quantised: it would need a quantisation "
+    "backend whose identity changes between transformers releases"
+)
+
+
+# --------------------------------------------------------------------------
+# Environment overrides
+# --------------------------------------------------------------------------
+def test_llm_repo_override(monkeypatch) -> None:
+    """Swapping a model must not require editing source on a demo runtime."""
+    monkeypatch.setenv("TE_PROFILE", "gpu-colab")
+    monkeypatch.setenv("TE_LLM_REPO", "Qwen/Qwen2.5-7B-Instruct")
+    settings = config.get_settings()
+    assert settings.slots.llm_repo == "Qwen/Qwen2.5-7B-Instruct"
+    assert settings.slots.llm_file is None, "a repo override implies not a GGUF"
+
+
+def test_llm_override_leaves_the_embedder_alone(monkeypatch) -> None:
+    """Changing the LLM must not disturb the index the embedder built."""
+    monkeypatch.setenv("TE_PROFILE", "gpu-colab")
+    monkeypatch.setenv("TE_LLM_REPO", "some/other-model")
+    settings = config.get_settings()
+    assert settings.slots.embedder == GPU_SLOTS.embedder
+    assert settings.slots.embed_dim == GPU_SLOTS.embed_dim
+
+
+def test_gguf_file_override(monkeypatch) -> None:
+    monkeypatch.setenv("TE_PROFILE", "cpu-lite")
+    monkeypatch.setenv("TE_LLM_REPO", "org/some-gguf")
+    monkeypatch.setenv("TE_LLM_FILE", "model-q4.gguf")
+    assert config.get_settings().slots.llm_file == "model-q4.gguf"
+
+
+def test_bad_embed_dim_is_ignored(monkeypatch) -> None:
+    """A malformed override must not crash startup."""
+    monkeypatch.setenv("TE_PROFILE", "cpu-lite")
+    monkeypatch.setenv("TE_EMBED_DIM", "not-a-number")
+    assert config.get_settings().slots.embed_dim == CPU_SLOTS.embed_dim
+
+
+def test_no_overrides_leaves_slots_untouched(monkeypatch) -> None:
+    monkeypatch.setenv("TE_PROFILE", "cpu-lite")
+    for var in ("TE_LLM_REPO", "TE_LLM_FILE", "TE_EMBEDDER", "TE_EMBED_DIM", "TE_ASR_MODEL"):
+        monkeypatch.delenv(var, raising=False)
+    assert config.get_settings().slots is CPU_SLOTS

@@ -134,7 +134,19 @@ GPU_SLOTS = ModelSlots(
     embedder="BAAI/bge-m3",                       # MIT — replaces CC-BY-NC jina-v3
     embed_dim=1024,
     reranker="BAAI/bge-reranker-v2-m3",           # Apache-2.0
-    llm_repo="Qwen/Qwen3-8B-AWQ",                 # Apache-2.0, ~5.5 GB on T4
+    # Qwen3-4B in plain fp16 rather than Qwen3-8B-AWQ. Recent transformers
+    # routes AWQ loading through `gptqmodel`, so an AWQ repo now fails with
+    # "Loading an AWQ quantized model requires gptqmodel" even with autoawq
+    # installed — and gptqmodel compiles CUDA kernels, which is a long and
+    # failure-prone install on a demo runtime.
+    #
+    # fp16 needs no quantisation backend at all: 4B x 2 bytes = ~8 GB, which
+    # leaves room on a 16 GB T4 for BGE-M3 (~2.3) and the reranker (~1.2) plus
+    # KV cache. The 8B model only fits quantised, which is what created the
+    # dependency in the first place.
+    #
+    # Override with TE_LLM_REPO to try something else without editing code.
+    llm_repo="Qwen/Qwen3-4B",                     # Apache-2.0, fp16
     llm_file=None,
     tts_voice_ar="ar_JO-kareem-medium",
     tts_voice_en="en_US-lessac-medium",
@@ -218,10 +230,45 @@ class Settings:
         return self.profile is Profile.GPU_COLAB
 
 
+def _apply_slot_overrides(slots: ModelSlots) -> ModelSlots:
+    """Let environment variables swap a model without editing code.
+
+    Model availability shifts under you — a quantisation format stops loading
+    after a `transformers` release, a repo is gated, a machine has less VRAM
+    than expected. Being able to say `TE_LLM_REPO=...` and re-run beats editing
+    a source file on a demo runtime.
+
+    Overrides are per-slot, so changing the LLM does not disturb the embedder
+    or the index that was built with it.
+    """
+    from dataclasses import replace
+
+    changes: dict[str, object] = {}
+    if repo := os.getenv("TE_LLM_REPO"):
+        changes["llm_repo"] = repo
+        # A repo override without a file override means "not a GGUF", unless
+        # the caller says otherwise below.
+        changes["llm_file"] = None
+    if file := os.getenv("TE_LLM_FILE"):
+        changes["llm_file"] = file
+    if embedder := os.getenv("TE_EMBEDDER"):
+        changes["embedder"] = embedder
+    if dim := os.getenv("TE_EMBED_DIM"):
+        try:
+            changes["embed_dim"] = int(dim)
+        except ValueError:
+            pass
+    if asr := os.getenv("TE_ASR_MODEL"):
+        changes["asr"] = asr
+
+    return replace(slots, **changes) if changes else slots
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     profile = detect_profile()
     slots = GPU_SLOTS if profile is Profile.GPU_COLAB else CPU_SLOTS
+    slots = _apply_slot_overrides(slots)
     settings = Settings(profile=profile, slots=slots)
     for path in (
         settings.data_dir,

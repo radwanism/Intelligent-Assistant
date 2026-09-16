@@ -74,6 +74,21 @@ class BGEReranker:
 _CACHE: dict[str, Reranker | None] = {}
 
 
+def release_reranker() -> None:
+    """Drop the cached reranker and free its GPU memory."""
+    _CACHE.clear()
+    try:
+        import gc
+
+        import torch
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
+
+
 def get_reranker(settings: Settings | None = None) -> Reranker | None:
     """Return a reranker, or None when the active profile does not use one."""
     settings = settings or get_settings()

@@ -15,10 +15,12 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import uuid
 from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
 
 from .config import get_settings
 from .documents.parse import UnsupportedDocument
@@ -78,6 +80,34 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="TE Assistant — Core", version="0.1.0", lifespan=lifespan)
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request, exc: Exception):
+    """Return JSON for unhandled errors, not Starlette's plain-text 500.
+
+    A plain-text body makes `response.json()` raise `JSONDecodeError: Expecting
+    value: line 1 column 1`, which tells the caller nothing and hides the real
+    exception inside the server log. Every client of this API — the Gradio UI,
+    the notebook, curl — then reports the JSON parse failure instead of the
+    cause.
+
+    The message is included deliberately. This is an on-premises POC with no
+    untrusted callers, and being able to read the failure in the response is
+    worth more here than withholding it. A public deployment should log the
+    detail and return only the error id.
+    """
+    error_id = uuid.uuid4().hex[:8]
+    log.exception("unhandled error %s on %s %s", error_id, request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": type(exc).__name__,
+            "detail": str(exc),
+            "error_id": error_id,
+            "path": request.url.path,
+        },
+    )
+
+
 @app.get("/health")
 async def health(services: Services = Depends(get_services)) -> dict[str, object]:
     settings = services.settings
@@ -89,7 +119,9 @@ async def health(services: Services = Depends(get_services)) -> dict[str, object
     except Exception:
         speech_ok = False
 
-    return {
+    from .gpu import memory_report
+
+    payload: dict[str, object] = {
         "status": "ok",
         "profile": settings.profile.value,
         "kb_chunks": services.retriever.store.kb_size(),
@@ -98,6 +130,20 @@ async def health(services: Services = Depends(get_services)) -> dict[str, object
         # The UI reads this to decide whether to show the microphone.
         "speech_available": speech_ok,
     }
+
+    # Surface VRAM here so an impending OOM is visible before a request fails.
+    # `other_processes_gib` is the number that matters: PyTorch reports only its
+    # own allocations, so a notebook kernel holding 11 GiB is invisible in the
+    # traceback and the error reads as though the model is simply too large.
+    if gpu := memory_report():
+        payload["gpu"] = gpu
+        if gpu["free_gib"] < 1.0 and gpu["other_processes_gib"] > 1.0:
+            payload["warning"] = (
+                f"only {gpu['free_gib']:.2f} GiB VRAM free; "
+                f"{gpu['other_processes_gib']:.2f} GiB is held by another process"
+            )
+
+    return payload
 
 
 @app.post("/session")

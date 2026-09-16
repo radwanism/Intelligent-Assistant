@@ -91,6 +91,10 @@ def synthesize(text: str, language: str) -> str | None:
         return None
 
 
+class CoreError(RuntimeError):
+    """A backend failure with the server's own explanation attached."""
+
+
 def send_chat(message: str, session_id: str, input_mode: str, confidence: float | None
               ) -> dict[str, Any]:
     with _client() as client:
@@ -103,8 +107,28 @@ def send_chat(message: str, session_id: str, input_mode: str, confidence: float 
                 "transcript_confidence": confidence,
             },
         )
-        response.raise_for_status()
+        if response.status_code >= 400:
+            # Surface what the server said. "Server error '500'" on its own
+            # sends the reader to an MDN page about HTTP status codes, which is
+            # never the problem — the cause is in the response body.
+            raise CoreError(_describe_error(response))
         return response.json()
+
+
+def _describe_error(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except Exception:
+        return f"HTTP {response.status_code}: {response.text[:400] or '(empty body)'}"
+
+    if isinstance(payload, dict):
+        detail = payload.get("detail") or payload.get("error") or payload
+        name = payload.get("error", "")
+        error_id = payload.get("error_id")
+        suffix = f"  [error_id {error_id}]" if error_id else ""
+        prefix = f"{name}: " if name and name != detail else ""
+        return f"{prefix}{detail}{suffix}"
+    return f"HTTP {response.status_code}: {payload}"
 
 
 # --------------------------------------------------------------------------

@@ -29,7 +29,7 @@ Paths assume the repository root. README.md is the overview; this is the referen
 |---|---|---|
 | *(core)* | retrieval, security, API, UI | 3.11 – 3.13 |
 | `[cpu]` | local LLM via llama.cpp — the on-prem profile | **3.11 on Windows**, 3.11+ elsewhere |
-| `[gpu]` | CUDA: BGE-M3, reranker, Qwen3-8B-AWQ | 3.11 – 3.13 |
+| `[gpu]` | CUDA: BGE-M3, reranker, Qwen3-4B | 3.11 – 3.13 |
 | `[dev]` | pytest, ruff, jiwer, python-pptx | any |
 
 Only `[cpu]` is version-sensitive. `llama-cpp-python` publishes **source distributions

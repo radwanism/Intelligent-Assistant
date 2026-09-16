@@ -122,7 +122,7 @@ namespace packages, but it loads a *second, separate copy* of every module — s
 started normally and your notebook end up with different settings objects and different
 model caches.
 
-Expect `gpu-colab`, `Qwen/Qwen3-8B-AWQ`, `BAAI/bge-m3 (1024-d)`.
+Expect `gpu-colab`, `Qwen/Qwen3-4B`, `BAAI/bge-m3 (1024-d)`.
 
 ### If it says `cpu-lite` on a GPU runtime
 
@@ -176,7 +176,7 @@ Expect `indexed 681 chunks`.
 !python scripts/fetch_models.py
 ```
 
-Fetches Qwen3-8B-AWQ (~5.5 GB), Whisper large-v3, BGE-M3, the reranker and two Piper
+Fetches Qwen3-4B (~5.5 GB), Whisper large-v3, BGE-M3, the reranker and two Piper
 voices. Resumable if it drops.
 
 ---
