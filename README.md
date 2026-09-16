@@ -19,7 +19,6 @@ air-gapped, troubleshooting and the demo script. This README is the overview.
 | Install with no internet | [RUNBOOK §4 — air-gapped](RUNBOOK.md#4-air-gapped-install) |
 | Understand the pipeline | [the notebook](notebooks/te_assistant_walkthrough.ipynb) |
 | Present it | [**the deck**](docs/TelecomEgypt_Assistant.pptx) · [outline + notes](docs/presentation-outline.md) |
-| **Publish this repo** | **[DATA_NOTICE.md](DATA_NOTICE.md)** — read before going public |
 | Fix something | [RUNBOOK §8 — troubleshooting](RUNBOOK.md#8-troubleshooting) |
 
 ---
