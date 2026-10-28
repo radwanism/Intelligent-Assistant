@@ -33,6 +33,10 @@ class SessionScopeError(RuntimeError):
     """Raised when a session-scoped operation is attempted without a session."""
 
 
+class IndexMismatchError(RuntimeError):
+    """The index was built with an embedder of a different dimension than the active one."""
+
+
 class VectorStore:
     def __init__(self, settings: Settings | None = None, embedder: Any | None = None) -> None:
         self.settings = settings or get_settings()
@@ -124,12 +128,24 @@ class VectorStore:
         if collection.count() == 0:
             return []
         vector = self.embedder.embed_query(query)
-        result = collection.query(
-            query_embeddings=[list(map(float, vector))],
-            n_results=min(k, collection.count()),
-            where=where,
-            include=["documents", "metadatas", "distances"],
-        )
+        try:
+            result = collection.query(
+                query_embeddings=[list(map(float, vector))],
+                n_results=min(k, collection.count()),
+                where=where,
+                include=["documents", "metadatas", "distances"],
+            )
+        except Exception as exc:
+            if "dimension" in str(exc).lower():
+                raise IndexMismatchError(
+                    f"The vector index and the active embedder disagree on dimension "
+                    f"(embedder {self.settings.slots.embedder}, {len(vector)}-d): {exc} "
+                    f"The index was built with a different embedder than this profile "
+                    f"uses. Rebuild it: "
+                    f"`python -m te_assistant.ingest.build_index --stage index --reset` "
+                    f"— after the embedder has finished downloading."
+                ) from exc
+            raise
         return _to_scored(result)
 
     # -- lifecycle (B.8: eviction at session end) --------------------------

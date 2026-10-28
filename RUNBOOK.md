@@ -162,8 +162,9 @@ Best option if downloads are slow locally — Colab pulls 2.7 GB in a minute or 
 
 ### 2.1 Notebook (recommended)
 
-Open `notebooks/te_assistant_walkthrough.ipynb` in Colab, set `REPO_URL` in the first
-cell, **Runtime → Change runtime type → T4 GPU**, then Run all.
+Open `notebooks/te_assistant_walkthrough.ipynb` in Colab, set `GH_USER` / `GH_REPO` in the
+first code cell, **Runtime → Change runtime type → T4 GPU**, then Run all. Step-by-step
+guide: [COLAB.md](COLAB.md).
 
 It clones, installs, re-indexes if needed, fetches models, walks through the pipeline and
 launches the UI with a public URL.

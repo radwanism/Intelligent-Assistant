@@ -172,6 +172,25 @@ def stage_index(settings: Settings, docs: list[CleanDoc], *, reset: bool) -> int
     )
 
     store = VectorStore(settings)
+
+    # The embedder that is actually loaded must be the one the profile names. On the
+    # GPU profile `get_embedder` degrades to the 384-d ONNX model when BGE-M3 cannot
+    # load (a missing extra, a download that did not finish) — right for serving, but
+    # for *building* it would quietly write a 384-d index that the 1024-d serving
+    # embedder cannot query, and the failure would only surface later as a Chroma
+    # dimension error far from its cause.
+    actual = store.embedder.dim
+    expected = settings.slots.embed_dim
+    if actual != expected:
+        raise SystemExit(
+            f"refusing to build the index: the profile {settings.profile.value!r} expects "
+            f"{expected}-d vectors from {settings.slots.embedder}, but the embedder that "
+            f"loaded produces {actual}-d (it fell back — look for 'unavailable' or "
+            f"'falling back' in the log above). "
+            f"Make sure the embedder has finished downloading "
+            f"(`python scripts/fetch_models.py --only embedder`) and re-run."
+        )
+
     if reset:
         store.reset_kb()
 

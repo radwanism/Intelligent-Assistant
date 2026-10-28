@@ -161,7 +161,7 @@ Disk at last check: **7.78 GB free**.
 ## Resuming on Colab
 
 1. `git remote add origin <your-repo>` && `git push -u origin main`
-2. Open `notebooks/te_assistant_walkthrough.ipynb` in Colab, set `REPO_URL`, pick a T4
+2. Open `notebooks/te_assistant_walkthrough.ipynb` in Colab, set `GH_USER` / `GH_REPO` in the first code cell, pick a T4
 3. Run all — it clones, installs, **re-indexes** (required: the committed index is 384-d,
    the GPU profile is 1024-d), fetches models, and launches with a public URL
 

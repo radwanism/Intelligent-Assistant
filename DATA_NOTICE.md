@@ -113,6 +113,6 @@ Verified: `raw.jsonl` and `smart_assistant/` are **not** staged. Largest tracked
 
 - [ ] Decide public vs private (see the te.eg question above)
 - [ ] `git log --format='%ae' | sort -u` — confirm no personal email
-- [ ] Set `REPO_URL` in `notebooks/te_assistant_walkthrough.ipynb` cell 1
+- [ ] Set `GH_USER` and `GH_REPO` in the first code cell of `notebooks/te_assistant_walkthrough.ipynb`
 - [ ] `git status --short` is empty
 - [ ] Confirm the brief and CV files are still outside the repository
