@@ -46,6 +46,44 @@ def load_manifest(path: Path) -> list[dict]:
         return [json.loads(line) for line in handle if line.strip()]
 
 
+REQUIRED_FIELDS = ("audio", "reference", "dialect", "condition")
+# What a meaningful run needs to contain: the case study is about noisy audio and
+# Egyptian dialect, and a clip of silence is what exercises the hallucination filter.
+EXPECTED_CONDITIONS = ("clean", "noisy", "silence")
+EXPECTED_DIALECTS = ("arz", "ar", "en")
+
+
+def validate_manifest(items: list[dict], audio_dir: Path) -> tuple[list[str], list[str]]:
+    """Return (problems, coverage_warnings) without running any model.
+
+    Problems make a run meaningless or impossible (missing file, missing field).
+    Coverage warnings are legitimate manifests that cannot answer the question the
+    case study asks — e.g. no noisy clip, so no noisy-audio WER.
+    """
+    problems: list[str] = []
+    for index, item in enumerate(items, start=1):
+        label = item.get("audio", f"entry {index}")
+        for name in REQUIRED_FIELDS:
+            if name not in item:
+                problems.append(f"{label}: missing field '{name}'")
+        audio = item.get("audio")
+        if audio and not (audio_dir / audio).exists():
+            problems.append(f"{label}: file not found in {audio_dir}")
+        if item.get("condition") != "silence" and not str(item.get("reference", "")).strip():
+            problems.append(f"{label}: empty reference transcript")
+
+    warnings: list[str] = []
+    conditions = {item.get("condition") for item in items}
+    dialects = {item.get("dialect") for item in items}
+    for condition in EXPECTED_CONDITIONS:
+        if condition not in conditions:
+            warnings.append(f"no '{condition}' clip — that condition will have no WER")
+    for dialect in EXPECTED_DIALECTS:
+        if dialect not in dialects:
+            warnings.append(f"no '{dialect}' clip — that dialect will have no WER")
+    return problems, warnings
+
+
 def score_pair(reference: str, hypothesis: str) -> dict[str, float]:
     import jiwer
 
@@ -73,7 +111,23 @@ def main() -> int:
     parser.add_argument("--model", default=None, help="override the profile's ASR model")
     parser.add_argument("--compute-type", default=None)
     parser.add_argument("--out", type=Path, default=Path("data/eval/results/asr.json"))
+    parser.add_argument(
+        "--check", action="store_true",
+        help="validate the manifest and its coverage, then exit without loading a model",
+    )
     args = parser.parse_args()
+
+    if args.check:
+        items = load_manifest(args.manifest)
+        problems, warnings = validate_manifest(items, args.manifest.parent)
+        print(f"{len(items)} clip(s) listed in {args.manifest}")
+        for problem in problems:
+            print(f"  ✗ {problem}")
+        for warning in warnings:
+            print(f"  ! {warning}")
+        if not problems and not warnings:
+            print("  ✓ manifest is complete")
+        return 1 if problems else 0
 
     from te_assistant.config import get_settings
     from te_assistant.speech import asr as asr_module

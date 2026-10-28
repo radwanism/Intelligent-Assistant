@@ -157,3 +157,53 @@ def test_cpu_profile_goes_straight_to_llama_cpp(monkeypatch) -> None:
 
     assert client.get_llm(_settings(Profile.CPU_LITE, CPU_SLOTS)) is sentinel
     monkeypatch.setattr(client, "_INSTANCE", None)
+
+
+# --------------------------------------------------------------------------
+# Reranker selection survives a duplicated Profile enum
+# --------------------------------------------------------------------------
+def test_reranker_is_selected_by_profile_value_not_identity(monkeypatch) -> None:
+    """The same bug as the LLM and embedder, in the third place it could live.
+
+    A Profile whose *value* is right but whose *class* is a different copy makes
+    `is` report False. If the reranker compared by identity it would silently
+    switch off on the GPU profile — no error, just worse ranking.
+    """
+    import dataclasses
+
+    from te_assistant.config import GPU_SLOTS, Settings
+    from te_assistant.retrieval import rerank
+
+    class FakeReranker:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    monkeypatch.setattr(rerank, "BGEReranker", FakeReranker)
+    rerank._CACHE.clear()
+
+    lookalike = types.SimpleNamespace(value="gpu-colab")
+    assert lookalike is not Profile.GPU_COLAB, "precondition: identity comparison would fail"
+    settings = dataclasses.replace(
+        Settings(profile=Profile.GPU_COLAB, slots=GPU_SLOTS), profile=lookalike
+    )
+
+    try:
+        assert isinstance(rerank.get_reranker(settings), FakeReranker)
+    finally:
+        rerank._CACHE.clear()
+
+
+def test_cpu_profile_still_has_no_reranker(monkeypatch) -> None:
+    import dataclasses
+
+    from te_assistant.config import CPU_SLOTS, GPU_SLOTS, Settings
+    from te_assistant.retrieval import rerank
+
+    monkeypatch.setattr(rerank, "BGEReranker", lambda name: object())
+    rerank._CACHE.clear()
+    # Even with a reranker model named, the CPU profile must not load one.
+    settings = Settings(
+        profile=Profile.CPU_LITE, slots=dataclasses.replace(CPU_SLOTS, reranker=GPU_SLOTS.reranker)
+    )
+    assert rerank.get_reranker(settings) is None
+    rerank._CACHE.clear()

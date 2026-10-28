@@ -3,11 +3,13 @@
 B.6 asks for the *contract*, not just the trigger, so this module answers three
 questions explicitly:
 
-  **What transfers?** The full conversation transcript, the detected language and
-  dialect (so routing can pick an Egyptian-dialect agent), the last intent, the
-  reasons the system escalated, and any resolved account. PII is restored for the
-  agent — they are authorised to see it — but the stored copy is masked, because
-  the queue outlives the conversation.
+  **What transfers?** The conversation transcript, the detected language and
+  dialect (so routing can pick an Egyptian-dialect agent), the last intent, and
+  the reasons the system escalated. The transcript is masked when the ticket is
+  opened — phone numbers, ids and cards appear as placeholders — because the
+  queue outlives the conversation and is read by someone who does not hold the
+  session. An agent who needs the customer's number gets it from the account
+  system, not from a transcript left lying in a queue.
 
   **What does the user see?** An immediate acknowledgement in their own language
   with a reference number, so the handoff is not a silent dead end.
@@ -30,6 +32,7 @@ import uuid
 from datetime import UTC, datetime
 
 from ..schemas import FrustrationSignal, HandoffTicket, IntentName, Language
+from ..security import pii
 
 log = logging.getLogger(__name__)
 
@@ -60,11 +63,18 @@ class HandoffQueue:
         language: Language,
         last_intent: IntentName,
     ) -> HandoffTicket:
+        # The queue outlives the conversation, so what it holds is masked at the
+        # point of entry. The session keeps the raw history for as long as the
+        # session lives; the ticket never has it.
+        safe_transcript = [
+            {**message, "content": pii.scrub_for_logs(message.get("content", ""))}
+            for message in transcript[-20:]
+        ]
         ticket = HandoffTicket(
             ticket_id=f"HO-{uuid.uuid4().hex[:8].upper()}",
             session_id=session_id,
             reason=reason,
-            transcript=transcript[-20:],
+            transcript=safe_transcript,
             detected_language=language,
             last_intent=last_intent,
             agent_available=self.agent_available(),

@@ -22,10 +22,52 @@ import threading
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from ..schemas import TurnRecord
+from ..security import pii
 
 log = logging.getLogger(__name__)
+
+
+def _scrub_value(value: Any) -> Any:
+    return pii.scrub_for_logs(value) if isinstance(value, str) else value
+
+
+def for_storage(record: TurnRecord) -> TurnRecord:
+    """A copy of `record` that is safe to keep after the session has ended.
+
+    The trace file is the one place customer data would outlive its session, so
+    the guarantee is enforced here, at the write, rather than left to every
+    place that builds a record:
+
+      * free-text fields are masked again — a no-op when the caller already did
+        it, and the safety net when one forgot;
+      * an executed action's *result* (plan, balance, due date, ticket) is
+        replaced by the names of its fields. The analytics need to know that an
+        action ran and what kind; they do not need the customer's balance.
+
+    The caller's original record, and the response built from it, are untouched,
+    so the user still sees their own result.
+    """
+    stored = record.model_copy(deep=True)
+    stored.question = pii.scrub_for_logs(stored.question)
+    if stored.transcript:
+        stored.transcript = pii.scrub_for_logs(stored.transcript)
+    stored.entities = {key: _scrub_value(val) for key, val in stored.entities.items()}
+    stored.citations = [
+        c.model_copy(update={
+            "title": pii.scrub_for_logs(c.title),
+            "snippet": pii.scrub_for_logs(c.snippet),
+            "doc_name": pii.scrub_for_logs(c.doc_name) if c.doc_name else None,
+        })
+        for c in stored.citations
+    ]
+    if stored.action is not None and stored.action.result:
+        stored.action = stored.action.model_copy(
+            update={"result": {"redacted": True, "fields": sorted(stored.action.result)}}
+        )
+    return stored
 
 
 class RecordStore:
@@ -38,6 +80,7 @@ class RecordStore:
         self._lock = threading.Lock()
 
     def add(self, record: TurnRecord) -> None:
+        record = for_storage(record)
         with self._lock:
             self._records.append(record)
             try:

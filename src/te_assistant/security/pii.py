@@ -15,7 +15,8 @@ payment data.
 Why regex and not Presidio: Presidio pulls spaCy plus a language model (~500 MB)
 and its Arabic support would need a model we are not otherwise loading. On the
 cpu-lite profile that cost buys nothing over well-tested patterns, and these
-patterns are directly asserted in `tests/test_pii.py`.
+patterns are directly asserted in `tests/test_security.py` (and, for masking of
+retrieved passages and of what is persisted, `tests/test_pii_context.py`).
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from ..schemas import PIIMaskResult
+from ..schemas import PIIMaskResult, ScoredChunk, SourceKind
 
 
 @dataclass(frozen=True)
@@ -81,18 +82,30 @@ def luhn_valid(digits: str) -> bool:
 _VALIDATORS = {"luhn": luhn_valid}
 
 
-def mask(text: str) -> PIIMaskResult:
+def mask(text: str, *, seed: dict[str, str] | None = None) -> PIIMaskResult:
     """Replace PII with stable placeholders.
 
     Repeated occurrences of the same value get the same placeholder, so the
     model can still reason about "the number you gave me" without ever seeing it.
-    """
-    if not text:
-        return PIIMaskResult(masked_text="", mapping={})
 
-    mapping: dict[str, str] = {}
-    reverse: dict[str, str] = {}
+    `seed` is a mapping from an earlier call. Masking the question and then the
+    retrieved passages must share one numbering: two independent calls would
+    both emit `<PII_PHONE_1>` for different numbers, and unmasking the answer
+    would then restore the wrong one. With a seed, numbering continues and a
+    value already seen reuses its placeholder. The returned mapping is the seed
+    plus anything new.
+    """
+    mapping: dict[str, str] = dict(seed or {})
+    if not text:
+        return PIIMaskResult(masked_text="", mapping=mapping)
+
+    reverse: dict[str, str] = {value: key for key, value in mapping.items()}
     counters: dict[str, int] = {}
+    for placeholder in mapping:
+        parsed = _PLACEHOLDER_PARTS.fullmatch(placeholder)
+        if parsed:
+            label, number = parsed.group(1), int(parsed.group(2))
+            counters[label] = max(counters.get(label, 0), number)
     masked = text
 
     for spec in PATTERNS:
@@ -125,10 +138,54 @@ def unmask(text: str, mapping: dict[str, str]) -> str:
 
 
 PLACEHOLDER_RE = re.compile(r"<PII_[A-Z]+_\d+>")
+_PLACEHOLDER_PARTS = re.compile(r"<PII_([A-Z]+)_(\d+)>")
 
 
 def contains_placeholder(text: str) -> bool:
     return bool(PLACEHOLDER_RE.search(text))
+
+
+def mask_chunks(
+    chunks: list[ScoredChunk], mapping: dict[str, str]
+) -> tuple[list[ScoredChunk], dict[str, str]]:
+    """Mask the customer-supplied passages that are about to enter a prompt.
+
+    Masking the question alone does not meet the requirement that sensitive
+    data is never visible to the model: when a user uploads their bill and asks
+    about it, the number printed on the bill is retrieved straight into the
+    prompt. So passages from user documents are masked too, continuing the
+    question's numbering (see `mask`), and the caller unmasks the answer with
+    the returned mapping.
+
+    Public te.eg content is deliberately left alone. Its phone numbers and
+    addresses are the *answer* — "call 19777", "write to Customer.care@te.eg" —
+    and masking them would remove information the model needs.
+
+    Returns copies; the stored chunks are never modified.
+    """
+    combined = dict(mapping)
+    out: list[ScoredChunk] = []
+    for scored in chunks:
+        chunk = scored.chunk
+        if chunk.source_kind is not SourceKind.USER_DOCUMENT:
+            out.append(scored)
+            continue
+
+        def _masked(value: str | None) -> str | None:
+            nonlocal combined
+            if not value:
+                return value
+            result = mask(value, seed=combined)
+            combined = result.mapping
+            return result.masked_text
+
+        updated = chunk.model_copy(update={
+            "text": _masked(chunk.text) or "",
+            "title": _masked(chunk.title) or "",
+            "doc_name": _masked(chunk.doc_name),
+        })
+        out.append(scored.model_copy(update={"chunk": updated}))
+    return out, combined
 
 
 def scrub_for_logs(text: str) -> str:

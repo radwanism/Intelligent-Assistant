@@ -114,17 +114,32 @@ CPU_SLOTS = ModelSlots(
     asr_compute_type="int8",
     # Apache-2.0, ONNX via fastembed, 0.22 GB. Chosen over multilingual-e5-large
     # (1024-d, 2.24 GB) purely on footprint: the on-prem dev target has ~5.5 GB
-    # free and the LLM, ASR and TTS weights need ~2.6 GB of that. E5-large is the
-    # better retriever, especially cross-lingually, and the gap between them is
-    # measured in scripts/eval_rag.py rather than assumed — swap it here if the
+    # free and the LLM, ASR and TTS weights need roughly 3 GB of that. E5-large is
+    # the better retriever, especially cross-lingually, and the gap between them
+    # is measured in scripts/eval_rag.py rather than assumed — swap it here if the
     # deployment has the disk. BGE-M3 covers quality on the GPU profile.
     embedder="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
     embed_dim=384,
     reranker=None,                                # too slow on 4 CPU cores
-    llm_repo="Qwen/Qwen2.5-3B-Instruct-GGUF",
-    llm_file="qwen2.5-3b-instruct-q4_k_m.gguf",
+    # Qwen3-4B-Instruct-2507, Q4_K_M (~2.5 GB). Apache-2.0 and NON-thinking: the
+    # hybrid Qwen3-4B emits <think> blocks, which would be swallowed by the intent
+    # call's stop sequence and silently route every action to the read-only
+    # fallback. Same ChatML template as the model it replaced, so output parsing
+    # is unchanged.
+    #
+    # Not Qwen2.5-3B-Instruct: that one is under the Qwen Research licence (the
+    # 3B and 72B are the exceptions in the Qwen2.5 family, which is otherwise
+    # Apache-2.0), i.e. non-commercial — disqualified by the same licence filter
+    # that excluded jina-embeddings-v3.
+    #
+    # Qwen publishes no official GGUF of the 2507 instruct model, so this is
+    # unsloth's conversion (also Apache-2.0, inherited from the base weights).
+    # An air-gapped site should convert from Qwen/Qwen3-4B-Instruct-2507 itself
+    # and point TE_MODELS_DIR at the result.
+    llm_repo="unsloth/Qwen3-4B-Instruct-2507-GGUF",
+    llm_file="Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
     tts_voice_ar="ar_JO-kareem-medium",
-    tts_voice_en="en_US-lessac-medium",
+    tts_voice_en="en_US-ljspeech-medium",
     ocr="rapidocr",
 )
 
@@ -149,10 +164,44 @@ GPU_SLOTS = ModelSlots(
     llm_repo="Qwen/Qwen3-4B",                     # Apache-2.0, fp16
     llm_file=None,
     tts_voice_ar="ar_JO-kareem-medium",
-    tts_voice_en="en_US-lessac-medium",
+    tts_voice_en="en_US-ljspeech-medium",
     ocr="rapidocr",                               # PaddleOCR-VL Arabic support unproven
     lazy_slots=("ocr", "tts"),
 )
+
+
+# Licence of every model that can sit in a CORE slot, as stated on its own model
+# card. Licence is a hard filter (brief B.3) and a property of the *weights and
+# their training data*, not of the runtime — Piper is MIT, but a voice trained on
+# a research-only corpus is not. tests/test_licences.py fails if a slot names a
+# model that is missing here or is not commercially usable, so swapping a model
+# cannot quietly reintroduce a non-commercial one.
+#
+# "unverified" means the card does not establish the terms. It is allowed only
+# for the entries in UNVERIFIED_LICENCES, which is a deliberate, visible list.
+CORE_MODEL_LICENCES: dict[str, str] = {
+    "unsloth/Qwen3-4B-Instruct-2507-GGUF": "apache-2.0",
+    "Qwen/Qwen3-4B": "apache-2.0",
+    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2": "apache-2.0",
+    "BAAI/bge-m3": "mit",
+    "BAAI/bge-reranker-v2-m3": "apache-2.0",
+    "faster-whisper:small": "mit",
+    "faster-whisper:large-v3": "mit",
+    "en_US-ljspeech-medium": "public-domain",
+    "ar_JO-kareem-medium": "unverified",
+    "rapidocr": "apache-2.0",
+}
+COMMERCIAL_LICENCES = frozenset({"apache-2.0", "mit", "public-domain"})
+UNVERIFIED_LICENCES = frozenset({"ar_JO-kareem-medium"})
+
+
+def core_models(slots: ModelSlots) -> list[str]:
+    """Registry keys for every model a profile's slots would load."""
+    models = [slots.llm_repo, slots.embedder, f"faster-whisper:{slots.asr}",
+              slots.tts_voice_ar, slots.tts_voice_en, slots.ocr]
+    if slots.reranker:
+        models.append(slots.reranker)
+    return models
 
 
 @dataclass(frozen=True)
@@ -183,6 +232,11 @@ class Settings:
     # --- generation ---
     max_answer_tokens: int = 320
     temperature: float = 0.2
+    # Refuse (without calling the model) when the best retrieved chunk scores
+    # below this. See llm/generate.py for what the scale means and how to tune it.
+    min_retrieval_confidence: float = field(
+        default_factory=lambda: _env_float("TE_MIN_RETRIEVAL_CONFIDENCE", 0.15)
+    )
 
     # --- sessions (B.8) ---
     session_ttl_seconds: int = 60 * 60
@@ -228,6 +282,18 @@ class Settings:
     @property
     def is_gpu(self) -> bool:
         return self.profile is Profile.GPU_COLAB
+
+
+def _env_float(name: str, default: float) -> float:
+    """A float from the environment; a bad value falls back rather than crashing startup."""
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logging.getLogger(__name__).warning("ignoring %s=%r (not a number)", name, raw)
+        return default
 
 
 def _apply_slot_overrides(slots: ModelSlots) -> ModelSlots:

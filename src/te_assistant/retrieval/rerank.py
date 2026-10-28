@@ -93,7 +93,11 @@ def get_reranker(settings: Settings | None = None) -> Reranker | None:
     """Return a reranker, or None when the active profile does not use one."""
     settings = settings or get_settings()
     model_name = settings.slots.reranker
-    if model_name is None or settings.profile is not Profile.GPU_COLAB:
+    # By value, not identity: if the package is imported under two names there
+    # are two distinct Profile enums and `is` is silently False, which would
+    # turn the reranker off on the GPU profile with no error (see client.py and
+    # embedder.py, which compare the same way for the same reason).
+    if model_name is None or settings.profile.value != Profile.GPU_COLAB.value:
         return None
 
     if model_name in _CACHE:

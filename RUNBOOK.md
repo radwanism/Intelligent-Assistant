@@ -267,7 +267,7 @@ Nothing in the serving path touches the network once models are on disk.
 ## 5. Tests and evaluation
 
 ```bash
-pytest                                   # 126 tests, ~4 s
+pytest                                   # 317 tests, roughly 20-90 s
 pytest tests/test_session_isolation.py -v
 pytest -k "injection or pii"
 ```
@@ -276,7 +276,8 @@ The suite asserts the **negative** cases — injection refused, PII never reachi
 unauthorised actions refused, cross-session retrieval impossible.
 
 ```bash
-python scripts/eval_rag.py --k 5         # recall@k, MRR, split by query language
+python scripts/eval_rag.py --k 5         # recall@k, MRR by query language, refusal gate
+python scripts/eval_asr.py --check       # validate the audio manifest (no model loaded)
 python scripts/eval_asr.py               # WER (needs audio + manifest)
 python scripts/bench_models.py --embed   # model comparison
 python scripts/smoke_retrieval.py        # quick sanity after retrieval changes
@@ -284,7 +285,8 @@ python scripts/smoke_retrieval.py        # quick sanity after retrieval changes
 
 Results land in `data/eval/results/`.
 
-**For `eval_asr.py`** create `data/eval/audio/manifest.jsonl`:
+**For `eval_asr.py`** record the clips described in `data/eval/audio/README.md`, then create
+`data/eval/audio/manifest.jsonl` (start from `manifest.example.jsonl`) — run `--check` first:
 
 ```json
 {"audio": "clip01.wav", "reference": "عايز أعرف أسعار باقات الإنترنت", "dialect": "arz", "condition": "clean"}
@@ -304,6 +306,8 @@ Include a silent clip — it proves the hallucination filter fires.
 | `TE_MODELS_DIR` | — | pre-staged models (offline install) |
 | `TE_CORE_URL` | `http://127.0.0.1:8000` | where the UI finds core |
 | `TE_SPEECH_URL` | `http://127.0.0.1:8001` | where core finds speech |
+| `TE_AGENT_TOKEN` | generated at startup | operator credential for `/handoffs` and `/demo/grant` (`X-Agent-Token` header) |
+| `TE_MIN_RETRIEVAL_CONFIDENCE` | `0.15` | best-chunk relevance below which the model is not called; set from `eval_rag.py` output |
 
 Forcing `TE_PROFILE=cpu-lite` on a GPU machine is how you **measure** on-premises latency
 rather than estimating it.
@@ -326,8 +330,13 @@ Scenario 6 is the one to dwell on — the whole security argument in one interac
 
 ```bash
 curl -X POST http://127.0.0.1:8000/demo/grant \
+  -H "X-Agent-Token: $TE_AGENT_TOKEN" \
   -d "session_id=<id>" -d "customer_id=cust-1001" -d "scope=billing:read"
 ```
+
+`/demo/grant` and `/handoffs` are operator-only: they need the `X-Agent-Token` header. Set
+`TE_AGENT_TOKEN` before starting core to choose the value; if it is unset, core generates one
+and prints it once in its startup log (`operator token for /handoffs and /demo/grant`).
 
 Finish on `/metrics` and the **Insights** tab.
 
@@ -343,7 +352,10 @@ Finish on `/metrics` and the **Insights** tab.
 | Microphone missing in the UI | Speech service down | Check `:8001/health`; text chat is unaffected by design |
 | Voice input fails, text fine | ffmpeg not on PATH | Install ffmpeg |
 | First request takes minutes | Cold model load | `POST /warmup` on speech; core warms at startup |
-| ~25 s per answer on CPU | Expected on 4 cores | Use GPU, or `Qwen2.5-1.5B` as a documented fallback |
+| ~25 s+ per answer on CPU | Expected on 4 cores | Use GPU, or `Qwen2.5-1.5B-Instruct` (Apache-2.0) as a faster, weaker fallback via `TE_LLM_REPO` / `TE_LLM_FILE` |
+| Services run old code / a fix "does nothing" | The venv's editable install points at a different checkout (a copied venv) | Use `scripts/run_local.*` (they set `PYTHONPATH`), or `export PYTHONPATH=$PWD/src`, or re-run `uv pip install -e .` |
+| `/handoffs` or `/demo/grant` returns 401 | Missing operator token | Send `X-Agent-Token`; the value is `TE_AGENT_TOKEN`, or the one core printed at startup |
+| Valid questions answered with "couldn't find it" | Refusal-gate threshold too high for this embedder | Lower `TE_MIN_RETRIEVAL_CONFIDENCE`; `eval_rag.py` reports the false-refusal rate |
 | UI errors on startup | Launched before core was healthy | Wait for `:8000/health`, or use `run_local` |
 | Indexing crawls at <1 chunk/s | ONNX threading | Already fixed — pinned to physical cores |
 | Arabic retrieval misses obvious pages | Stemming/normalisation regression | `pytest tests/test_text_processing.py` |

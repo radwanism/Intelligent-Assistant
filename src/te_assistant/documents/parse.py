@@ -30,7 +30,9 @@ from ..schemas import Language
 log = logging.getLogger(__name__)
 
 SUPPORTED_SUFFIXES = {".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".bmp"}
-IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
+# Kept equal to the image members of SUPPORTED_SUFFIXES. TIFF used to be listed
+# here but not above, so it was dead: validation rejected it before this was read.
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
 # Below this many characters, a PDF page is treated as a scan and sent to OCR.
 SCAN_THRESHOLD_CHARS = 60

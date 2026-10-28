@@ -33,7 +33,7 @@ air-gapped, troubleshooting and the demo script. This README is the overview.
 | **recall@5** | **81.6%** |
 | **MRR** | 0.759 |
 | **Median retrieval latency** | 18–24 ms |
-| **Tests** | 126 passing |
+| **Tests** | 317 passing |
 
 | Query language | n | recall@5 |
 |---|---|---|
@@ -203,9 +203,9 @@ One codebase, two runtime profiles, selected automatically by device detection:
 |---|---|---|
 | Selected when | no CUDA GPU, or < 12 GB VRAM | CUDA GPU with ≥ 12 GB VRAM |
 | ASR | faster-whisper `small`, int8 | faster-whisper `large-v3`, fp16 |
-| Embeddings | `multilingual-e5-small` (ONNX) | `BAAI/bge-m3` |
+| Embeddings | `paraphrase-multilingual-MiniLM-L12-v2` (ONNX, 384-d) | `BAAI/bge-m3` (1024-d) |
 | Reranker | off — RRF ordering is final | `BAAI/bge-reranker-v2-m3` |
-| LLM | `Qwen2.5-3B-Instruct` Q4\_K\_M | `Qwen3-4B` |
+| LLM | `Qwen3-4B-Instruct-2507` Q4\_K\_M | `Qwen3-4B` (fp16) |
 | TTS | Piper | Piper |
 
 Override with `TE_PROFILE=cpu-lite` or `TE_PROFILE=gpu-colab`. Forcing `cpu-lite` on a GPU
@@ -216,18 +216,36 @@ That keeps the install near 1.5 GB instead of 4.5 GB, which is what makes it a c
 on-premises artifact. Installing `.[gpu]` pulls PyTorch and is only needed for the GPU
 profile.
 
-### Every core model is commercially licensed
+### Core-model licences
 
-| Model | License |
+Licence is a hard filter, checked against each model's own card and enforced by
+`tests/test_licences.py` (every model in a core slot must be registered in
+`config.CORE_MODEL_LICENCES` and be commercially usable).
+
+| Model | Licence |
 |---|---|
-| Qwen2.5-3B-Instruct / Qwen3-4B | Apache-2.0 |
-| multilingual-e5-small | MIT |
-| BAAI/bge-m3, bge-reranker-v2-m3 | MIT / Apache-2.0 |
-| faster-whisper (Systran) | MIT |
-| Piper voices | MIT |
+| Qwen3-4B-Instruct-2507 (CPU) / Qwen3-4B (GPU) | Apache-2.0 |
+| paraphrase-multilingual-MiniLM-L12-v2 | Apache-2.0 |
+| BAAI/bge-m3 · bge-reranker-v2-m3 | MIT · Apache-2.0 |
+| faster-whisper (`small`, `large-v3`) | MIT |
+| Piper voice `en_US-ljspeech-medium` | Public domain (LJ Speech) |
+| RapidOCR | Apache-2.0 |
+| **Piper voice `ar_JO-kareem-medium`** | **Unverified** — see below |
 
-`jina-embeddings-v3`, `jina-reranker-v2` and `f5-tts-egyptian-arabic` are **CC-BY-NC-4.0**
-and are therefore excluded from the serving path. They appear only in
+**Open item — the Arabic voice.** Piper's engine is MIT, but a voice's licence is that of
+its training data. The `ar_JO-kareem-medium` model card says only "License: See URL" and
+the dataset repository it points to states no licence. It is the only Arabic voice Piper
+ships, so it stays for the POC; it must be cleared with the dataset owner, or replaced,
+before any commercial deployment.
+
+The CPU LLM is deliberately the *non-thinking* Qwen3 instruct variant, and Qwen publishes
+no official GGUF of it — the default is unsloth's conversion (Apache-2.0, inherited from
+the base weights). An air-gapped site should convert `Qwen/Qwen3-4B-Instruct-2507` itself
+and point `TE_MODELS_DIR` at the result.
+
+`jina-embeddings-v3`, `jina-reranker-v2` and `f5-tts-egyptian-arabic` are **CC-BY-NC-4.0**,
+`Qwen2.5-3B-Instruct` is under the Qwen Research licence, and the `en_US-lessac` voice is
+trained on a research-only corpus; all are therefore excluded from the serving path. They appear only in
 `scripts/bench_models.py`, as comparison baselines.
 
 ---
@@ -256,6 +274,8 @@ Everything is environment-overridable; defaults live in `src/te_assistant/config
 | `TE_DATA_DIR` | `./data` | corpus, index, sessions, traces |
 | `TE_CORE_URL` | `http://127.0.0.1:8000` | where the UI finds core |
 | `TE_SPEECH_URL` | `http://127.0.0.1:8001` | where core finds speech |
+| `TE_AGENT_TOKEN` | generated at startup | operator credential for `/handoffs` and `/demo/grant` |
+| `TE_MIN_RETRIEVAL_CONFIDENCE` | `0.15` | below this best-chunk relevance the model is not called (calibrate with `eval_rag.py`) |
 
 ---
 
@@ -273,12 +293,23 @@ documents.
 ## Evaluation
 
 ```bash
-uv run python scripts/eval_rag.py     # recall@k, citation correctness, groundedness
-uv run python scripts/eval_asr.py     # WER on noisy Egyptian-dialect clips
-uv run python scripts/bench_models.py # model comparison, incl. external-API baselines
+uv run python scripts/eval_rag.py          # recall@k, MRR, refusal gate; split by language
+uv run python scripts/eval_asr.py --check  # validate the audio manifest, no model loaded
+uv run python scripts/eval_asr.py          # WER on noisy Egyptian-dialect clips
+uv run python scripts/bench_models.py      # model comparison, incl. external-API baselines
 ```
 
 Results tables are written to `data/eval/results/`.
+
+`eval_rag.py` scores the same ordering the assistant serves (and, where a reranker exists,
+also prints the fusion-only figures). It reports recall and MRR over the 38 in-scope
+questions, and separately how the retrieval gate treats the 10 out-of-scope ones: the
+false-refusal rate on in-scope questions, the refusal rate on out-of-scope ones, and whether
+any threshold separates them. **It does not measure citation correctness or whether the model
+declines faithfully** — those need the LLM and a judged answer set.
+
+`eval_asr.py` needs recorded clips; see [`data/eval/audio/README.md`](data/eval/audio/README.md)
+for the protocol. **No WER figure exists until they are recorded.**
 
 ---
 
@@ -289,7 +320,8 @@ src/te_assistant/
   config.py        profile + device detection, model slots
   schemas.py       the contract between the three services
   ingest/          te.eg crawl, boilerplate removal, chunking, index build
-  retrieval/       vector store, hybrid BM25+dense, reranking, Arabic normalisation
+  retrieval/       vector store, hybrid BM25+dense, reranking, Arabic normalisation,
+                   context selection (shared by the pipeline and the eval harness)
   documents/       PDF/DOCX/TXT/image parsing, OCR, per-session ingestion
   security/        guardrails, PII masking, permissions
   actions/         intent registry and the SQLite the backend (not the model) owns
@@ -309,5 +341,11 @@ src/te_assistant/
 - There is no user authentication. Sessions are anonymous and unguessable; per-document
   ownership is future work.
 - The te.eg snapshot is point-in-time. Prices and offers drift; re-run `te-ingest`.
-- On CPU, expect roughly 20-25 s per answer and 35-45 s voice-to-voice on a 4-core laptop.
-  Measured figures for both profiles are in `data/eval/results/`.
+- On CPU, expect tens of seconds per answer on a 4-core laptop. The 20-25 s text and 35-45 s
+  voice-to-voice figures were measured with a 3B model; the 4B default is roughly a third
+  heavier, so **re-measure before quoting latency.**
+- The refusal-gate threshold (`TE_MIN_RETRIEVAL_CONFIDENCE`) is a conservative starting value,
+  not a calibrated one. Run `eval_rag.py` on the deployment's own embedder and set it from the
+  reported separation.
+- Word error rate has not been measured; the harness exists, the audio clips do not.
+- Uploads are parsed and embedded inside the request, so a very large file blocks it.

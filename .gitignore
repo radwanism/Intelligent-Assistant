@@ -2,7 +2,7 @@
 smart_assistant/
 .venv/
 venv/
-
+docs/
 # Python
 __pycache__/
 *.py[cod]
@@ -51,3 +51,4 @@ logs/
 Thumbs.db
 .vscode/
 .idea/
+

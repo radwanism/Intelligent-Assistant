@@ -31,7 +31,7 @@ FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
 MAX_INTENT_TOKENS = 128
 
-# Cheap pre-checks. An explicit request for a human should not depend on a 3B
+# Cheap pre-checks. An explicit request for a human should not depend on a small
 # model's classification, and these phrases are unambiguous.
 HANDOFF_PATTERNS = re.compile(
     r"(?i)(speak|talk|connect)\s+(to|with)\s+(a\s+)?(human|person|agent|representative)"
@@ -68,9 +68,14 @@ def _coerce_intent_name(value: Any) -> IntentName:
         return IntentName(normalized)
     except ValueError:
         pass
-    # Tolerate near-misses ("bill_balance", "support_ticket") without ever
-    # widening this into fuzzy matching that could promote a read into a write.
+    # Tolerate near-misses on the *non-action* intents only ("answer",
+    # "out_of_scope_query"). An action intent must be named exactly: a substring
+    # match here would let "ticket" or "support" resolve to create_support_ticket,
+    # promoting a vague or malformed reply into a write. A near-miss on an action
+    # therefore falls through to the read-only default — the safe direction.
     for candidate in IntentName:
+        if candidate.is_action:
+            continue
         if normalized in candidate.value or candidate.value in normalized:
             return candidate
     return IntentName.ANSWER_QUESTION

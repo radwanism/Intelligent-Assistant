@@ -74,6 +74,8 @@ answer is 'everything', so they stay together."_
 | LLM unavailable | Retrieval still returns cited passages |
 | Reranker unavailable | Falls back to RRF ordering |
 | TTS fails | Text answer still delivered |
+| Nothing relevant retrieved | Declines without calling the model |
+| Malformed intent output | Falls back to the read-only path — never to an action |
 
 **Demonstrable:** `docker compose stop speech` — the assistant keeps working.
 
@@ -87,6 +89,7 @@ _"A degradation story that's never exercised is a guess. Each row is a test."_
 mic → VAD → ASR → hallucination filter → confidence gate
     → guardrails → PII mask → session resolve
     → hybrid retrieve (BM25 + dense → RRF) → rerank
+    → mask passages from the customer's own documents
     → intent ──action?──▶ permission check ──▶ backend executes
               └─else────▶ grounded generation + citations
     → output guardrail → unmask for display
@@ -224,15 +227,19 @@ _Live demo: a correctly-detected `check_bill_balance` for someone else's account
 
 ## 14 — Security, evidenced
 
-- **2 real action intents** over SQLite: `check_bill_balance` (read), `create_support_ticket` (write)
-- PII by regex with a **Luhn check** — so an order reference isn't masked as a card, because
-  over-masking removes information the model needs
+- **2 real action intents** over SQLite: `check_bill_balance` (read), `create_support_ticket` (write);
+  results are rendered by template, never generated
+- **PII is masked in the question and in retrieved passages** from the customer's own documents,
+  and again at every write (traces, handoff queue). Luhn-checked, so an order reference isn't
+  masked as a card — over-masking removes information the model needs
+- **Operator endpoints sit behind a token.** A session grants access to that session only
 - **Every refusal audited.** An audit log that only records successes can't answer "did
   anyone try?"
 - **Tests assert the negative cases** — injection blocked, PII never reaches the model,
-  unauthorised action refused, cross-session retrieval impossible
+  unauthorised action refused, cross-session retrieval impossible — including a turn-level test
+  that drives the real pipeline with a scripted model and asserts what the model *saw*
 
-**126 tests passing.**
+**317 tests passing.**
 
 **Honest limit:** guardrails are pattern-based. They stop scripted attempts, not a
 determined adversary with a paraphrase budget. The architecture doesn't rely on them —
@@ -246,6 +253,9 @@ Concurrent users must never retrieve each other's uploads.
 
 - Unguessable IDs (`secrets.token_urlsafe(32)`, 256 bits) — stops *guessing*
 - **Mandatory filtering in the store** — is the actual isolation
+- **Identity is scoped too** — chunk ids include the session, so two users uploading `bill.pdf`
+  can never overwrite each other
+- **Eviction is real** — files, embeddings and cached search state are all dropped at session end
 
 > There is deliberately **no code path** that reaches the session collection without a
 > filter. Default with no filter is **zero** documents, never all.
@@ -265,7 +275,9 @@ forget."_
 | **Docker** | 3 services, one image, model weights as a volume |
 | **Reproducible** | `pyproject.toml` + committed lockfile |
 
-**Every core model is commercially licensed** — Apache-2.0 or MIT.
+**Every core model carries a recorded licence** — Apache-2.0, MIT or public domain, read from each
+model's own card and enforced by a test. One item is open: the Arabic voice's training-data
+licence is not stated, and is to be cleared before commercial use.
 
 ---
 
@@ -274,10 +286,20 @@ forget."_
 `jina-embeddings-v3` is the strongest multilingual embedder in the shortlist.
 **It is CC-BY-NC-4.0. Non-commercial.**
 
-Same for `jina-reranker-v2` and `f5-tts-egyptian-arabic`.
+`jina-reranker-v2` and `f5-tts-egyptian-arabic` carry the same licence.
 
 **Replaced with `BAAI/bge-m3` (MIT)** — which also has ~20× the adoption. Zero cost to
 switch.
+
+**A licence is a property of the training data, not the runtime.** Piper is MIT, but the
+Lessac-trained voice (research-only corpus) and Qwen2.5-3B (Qwen Research licence) fail the same
+filter.
+
+**Mechanical, not remembered:** every model in a core slot is registered with the licence from its
+own card, and a test fails if one is missing or non-commercial.
+
+**One open item:** the Arabic voice's training-data licence is not stated — to be cleared before
+commercial use.
 
 _"A non-commercial model in a telecom's customer-facing assistant fails review for reasons
 that have nothing to do with benchmark scores. Licence is a hard filter, checked before
@@ -324,6 +346,10 @@ _"I'd rather say that than let someone find it by scaling the container."_
 | LoRA fine-tune on telecom QA | Real, but not a POC-scale task |
 | Langfuse tracing | Needs a server; JSONL tracing for now |
 | Per-document auth, visual retrieval | Deliberately deferred |
+| WER on recorded dialect clips | Harness and protocol are ready; the clips are not recorded |
+| Calibrate the refusal gate; judge citation accuracy | Needs the deployment's own embedder and a judged answer set |
+| Cleared Egyptian-dialect TTS voice | The only Arabic Piper voice has an unverified licence |
+| Background document ingestion | Large uploads currently block their request |
 
 ---
 
@@ -331,7 +357,7 @@ _"I'd rather say that than let someone find it by scaling the container."_
 
 > The core runs offline on a CPU. Every answer is cited. The model detects intent and
 > nothing else — the backend decides what may happen. And the numbers on these slides came
-> out of `/metrics` on the running system.
+> out of `eval_rag.py`, not a spreadsheet.
 
 ---
 

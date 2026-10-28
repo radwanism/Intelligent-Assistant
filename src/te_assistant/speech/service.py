@@ -13,7 +13,8 @@ D.4). The justification is specific rather than "microservices are good":
 
 So the contract is: **if this service is down, the assistant still works.** The
 core service treats speech as optional and the UI hides the microphone. That
-degradation is asserted in `tests/test_degradation.py`.
+degradation is asserted in `tests/test_ui_session.py` (the page hides the
+microphone and keeps text chat and uploads wired).
 """
 
 from __future__ import annotations

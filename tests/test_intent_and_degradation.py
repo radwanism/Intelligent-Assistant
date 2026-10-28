@@ -160,3 +160,41 @@ def test_invented_citation_markers_are_dropped() -> None:
 def test_answer_without_citations_returns_none() -> None:
     text, citations = extract_citations("An answer with no markers.", [_chunk(1)])
     assert citations == []
+
+
+# --------------------------------------------------------------------------
+# Near-miss intent names can only fall toward the read-only path
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "vague",
+    ["ticket", "support", "support_ticket", "create_ticket", "bill", "bill_balance",
+     "balance", "check", "create", "Create-Support-Ticket-Now"],
+)
+def test_a_near_miss_never_promotes_a_vague_reply_into_an_action(vague: str) -> None:
+    """A substring match on an action name would turn 'ticket' into a write."""
+    llm = FakeLLM(f'{{"intent": "{vague}", "confidence": 0.99, "slots": {{}}}}')
+    intent = detect_intent(llm, "افتح لي حاجة")
+    assert not intent.name.is_action, f"{vague!r} resolved to {intent.name.value}"
+
+
+@pytest.mark.parametrize(
+    ("exact", "expected"),
+    [
+        ("check_bill_balance", IntentName.CHECK_BILL_BALANCE),
+        ("create_support_ticket", IntentName.CREATE_SUPPORT_TICKET),
+        ("Check-Bill-Balance", IntentName.CHECK_BILL_BALANCE),
+        (" CREATE SUPPORT TICKET ", IntentName.CREATE_SUPPORT_TICKET),
+    ],
+)
+def test_exact_action_names_still_work_whatever_the_formatting(exact, expected) -> None:
+    llm = FakeLLM(f'{{"intent": "{exact}", "confidence": 0.95, "slots": {{}}}}')
+    assert detect_intent(llm, "x").name is expected
+
+
+@pytest.mark.parametrize(
+    ("loose", "expected"),
+    [("answer", IntentName.ANSWER_QUESTION), ("out_of_scope_request", IntentName.OUT_OF_SCOPE)],
+)
+def test_near_misses_on_read_only_intents_are_still_tolerated(loose, expected) -> None:
+    llm = FakeLLM(f'{{"intent": "{loose}", "confidence": 0.9, "slots": {{}}}}')
+    assert detect_intent(llm, "x").name is expected

@@ -1,16 +1,16 @@
 """LLM client — one interface, two backends.
 
-`cpu-lite`  Qwen2.5-3B-Instruct Q4_K_M through llama.cpp
-`gpu-colab` Qwen3-8B-AWQ through transformers
+`cpu-lite`  Qwen3-4B-Instruct-2507 Q4_K_M through llama.cpp
+`gpu-colab` Qwen3-4B (fp16) through transformers
 
 Note what is *absent* from this module: any import of `actions/`, `db`, or the
 permission checker. The model layer has no route to the database, by
 construction (brief B.4). It returns text and JSON; deciding what may be done
 with either happens elsewhere.
 
-Generation is capped hard (`max_answer_tokens`, default 320). On four CPU cores
-Qwen2.5-3B produces roughly 4-6 tokens/second, so an uncapped answer is a
-90-second answer. RAG answers should be short anyway — the citations carry the
+Generation is capped hard (`max_answer_tokens`, default 320). On four CPU cores a
+3-4B Q4 model produces only a few tokens/second, so an uncapped answer is a
+minute-and-a-half answer. RAG answers should be short anyway — the citations carry the
 detail — so the cap improves both latency and quality.
 """
 
@@ -97,7 +97,7 @@ class LlamaCppLLM:
 
 
 class TransformersLLM:
-    """GPU backend: Qwen3-8B-AWQ. fp16 only — a T4 is Turing, no bf16."""
+    """GPU backend: Qwen3-4B in fp16. fp16 only — a T4 is Turing, no bf16."""
 
     def __init__(self, settings: Settings) -> None:
         import inspect

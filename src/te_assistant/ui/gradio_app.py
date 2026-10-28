@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import io
 import logging
 import os
 from pathlib import Path
@@ -72,8 +73,15 @@ def transcribe(audio_path: str) -> dict[str, Any]:
         return response.json()
 
 
-def synthesize(text: str, language: str) -> str | None:
-    """Returns a path to a WAV, or None when there is nothing to speak."""
+def synthesize(text: str, language: str) -> tuple[int, Any] | None:
+    """Returns `(sample_rate, samples)` for the audio player, or None when
+    there is nothing to speak.
+
+    Handed back in memory rather than written to a file. A spoken answer is
+    customer-facing content; writing it into the working directory under a name
+    derived from a per-process-salted hash left an ever-growing pile of WAVs in
+    the repository folder that nothing ever deleted.
+    """
     try:
         with _client() as client:
             response = client.post(
@@ -82,9 +90,10 @@ def synthesize(text: str, language: str) -> str | None:
             if response.status_code == 204:
                 return None
             response.raise_for_status()
-            out = Path(gr.utils.abspath("."), f"tts_{abs(hash(text)) % 10**8}.wav")
-            out.write_bytes(response.content)
-            return str(out)
+            import soundfile  # noqa: PLC0415 - only the voice path needs it
+
+            samples, rate = soundfile.read(io.BytesIO(response.content), dtype="int16")
+            return int(rate), samples
     except Exception as exc:
         # TTS is additive: the text answer is already on screen.
         log.warning("synthesis unavailable: %s", exc)
@@ -179,6 +188,30 @@ def format_trace(record: dict[str, Any]) -> str:
     return "\n".join(rows)
 
 
+SESSION_RENEWED_NOTICE = (
+    "ℹ️ Your previous session expired, so a new one was started — documents you "
+    "uploaded earlier were cleared. Please upload them again if you need them.\n\n"
+    "ℹ️ انتهت جلستك السابقة وبدأنا جلسة جديدة — المستندات اللي رفعتها قبل كده اتمسحت. "
+    "ارفعها تاني لو محتاجها."
+)
+
+
+def adopt_session(history: list[dict[str, str]], previous_id: str, result: dict[str, Any]) -> str:
+    """The session id the *server* answered under, noting it when it changed.
+
+    `/chat` creates a fresh session when it is handed an unknown or expired id,
+    and says so only through the id on the turn record. A client that keeps
+    sending the dead id gets a new empty session on every turn — losing the
+    conversation history and every uploaded document with no sign that anything
+    happened. Taking the id from the response, and telling the user once when
+    it differs, is what makes that visible.
+    """
+    current = (result.get("record") or {}).get("session_id") or previous_id
+    if previous_id and current != previous_id:
+        history.append({"role": "assistant", "content": SESSION_RENEWED_NOTICE})
+    return current
+
+
 # --------------------------------------------------------------------------
 # Handlers
 # --------------------------------------------------------------------------
@@ -198,6 +231,7 @@ def on_text(message: str, history: list[dict[str, str]], session_id: str):
         )
         return history, "", "", "", None, session_id
 
+    session_id = adopt_session(history, session_id, result)
     history.append({"role": "assistant", "content": result["answer"]})
     # Text turns produce no audio (A.4: no needless TTS).
     return (
@@ -247,6 +281,7 @@ def on_voice(audio_path: str | None, history: list[dict[str, str]], session_id: 
         )
         return history, "", "", None, session_id
 
+    session_id = adopt_session(history, session_id, result)
     answer = result["answer"]
     history.append({"role": "assistant", "content": answer})
 
@@ -263,6 +298,15 @@ def on_voice(audio_path: str | None, history: list[dict[str, str]], session_id: 
     )
 
 
+def _post_document(path: str, session_id: str) -> httpx.Response:
+    with _client() as client, open(path, "rb") as handle:
+        return client.post(
+            f"{CORE_URL}/documents",
+            data={"session_id": session_id},
+            files={"file": (Path(path).name, handle)},
+        )
+
+
 def on_upload(files: list[str] | None, session_id: str):
     if not files:
         return "No file selected.", session_id
@@ -272,12 +316,17 @@ def on_upload(files: list[str] | None, session_id: str):
     messages: list[str] = []
     for path in files:
         try:
-            with _client() as client, open(path, "rb") as handle:
-                response = client.post(
-                    f"{CORE_URL}/documents",
-                    data={"session_id": session_id},
-                    files={"file": (Path(path).name, handle)},
+            response = _post_document(path, session_id)
+            if response.status_code == 404:
+                # The session expired. `/chat` would quietly start a new one; an
+                # upload cannot go to a session that no longer exists, so do the
+                # same here and say so, rather than failing with a bare 404.
+                session_id = new_session()
+                messages.append(
+                    "ℹ️ Your previous session expired — a new one was started and "
+                    "earlier documents were cleared."
                 )
+                response = _post_document(path, session_id)
             if response.status_code != 200:
                 detail = response.json().get("detail", response.text)
                 messages.append(f"❌ **{Path(path).name}** — {detail}")
@@ -419,7 +468,10 @@ def build_ui() -> gr.Blocks:
                     uploader = gr.File(
                         label="Upload PDF, DOCX, TXT or an image",
                         file_count="multiple",
-                        file_types=[".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg"],
+                        file_types=[
+                            ".pdf", ".docx", ".txt", ".md",
+                            ".png", ".jpg", ".jpeg", ".webp", ".bmp",
+                        ],
                         type="filepath",
                     )
                     upload_status = gr.Markdown(

@@ -30,6 +30,9 @@ ACCENT = RGBColor(0x00, 0x8C, 0x8C)
 WARN = RGBColor(0xC0, 0x39, 0x2B)
 WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 
+# Update when the suite changes; confirm with `pytest -q`.
+TESTS_PASSING = 317
+
 SLIDE_W = Inches(13.333)
 SLIDE_H = Inches(7.5)
 
@@ -307,7 +310,8 @@ def build(results: dict) -> Deck:
             "Voice or text in — input mode known from the channel, not guessed",
             ("Text is ALWAYS displayed.", "Voice is additive, never the only output."),
             "Every answer carries citations, and refuses rather than guessing",
-            "PDF / DOCX / TXT / image upload, scoped to the session only",
+            "PDF / DOCX / TXT / image upload, scoped to the session only — and masked "
+            "before the model reads it",
             "Actions (bill lookup, ticket creation) without giving the model DB access",
             "Frustration detection with a defined path to a human agent",
         ],
@@ -342,6 +346,8 @@ def build(results: dict) -> Deck:
             ["LLM unavailable", "Retrieval still returns cited passages"],
             ["Reranker unavailable", "Falls back to RRF ordering"],
             ["TTS fails", "Text answer still delivered"],
+            ["Nothing relevant retrieved", "Declines without calling the model"],
+            ["Malformed intent output", "Falls back to the read-only path — never to an action"],
         ],
         subtitle="Demonstrable in one command:  docker compose stop speech",
         col_widths=[4.2, 7.7],
@@ -355,6 +361,7 @@ def build(results: dict) -> Deck:
             "mic → VAD → ASR → hallucination filter → confidence gate",
             "→ input guardrails → PII masking → session resolve",
             "→ hybrid retrieve (BM25 + dense → RRF) → rerank",
+            "→ mask passages from the customer's own documents",
             "→ intent detection",
             "       ├── action?  → permission check → backend executes",
             "       └── else     → grounded generation + citations",
@@ -448,7 +455,7 @@ def build(results: dict) -> Deck:
         [(fmt_pct(recall), f"recall@{k}"),
          (f"{mrr:.3f}" if mrr else "—", "MRR"),
          (f"{latency:.0f} ms" if latency else "—", "median latency"),
-         ("126", "tests passing")],
+         (str(TESTS_PASSING), "tests passing")],
         subtitle=f"cpu-lite profile · 38-question bilingual golden set · {chunks} chunks",
         note="Every number on this slide came out of scripts/eval_rag.py on the running "
              "system, not from a spreadsheet.",
@@ -515,17 +522,19 @@ def build(results: dict) -> Deck:
         "Security, evidenced",
         [
             ("Two real action intents", "over SQLite: check_bill_balance (read), "
-             "create_support_ticket (write)"),
-            ("PII by regex with a Luhn check", "— so an order reference is not masked "
-             "as a card. Over-masking removes information the model needs."),
+             "create_support_ticket (write). Results are rendered by template, never "
+             "generated."),
+            ("PII is masked in the question AND in retrieved passages", "from the "
+             "customer's own documents — and again at every write: traces, handoff queue. "
+             "Luhn-checked, so an order reference is not masked as a card."),
             ("Every refusal audited.", "An audit log that only records successes "
              "cannot answer 'did anyone try?'"),
-            ("Tests assert the NEGATIVE cases:", "injection blocked, PII never reaching "
-             "the model, unauthorised action refused, cross-session retrieval impossible."),
-            "",
-            ("Honest limit:", "guardrails are pattern-based. They stop scripted "
-             "attempts, not a determined adversary. The architecture does not rely on "
-             "them — the model has no database access regardless."),
+            ("Operator endpoints sit behind a token.", "A session grants access to that "
+             "session only."),
+            ("Tests assert the NEGATIVE cases,", "including a turn-level test that drives "
+             "the real pipeline with a scripted model and asserts what the model SAW."),
+            ("Honest limit:", "guardrails are pattern-based and stop scripted attempts, "
+             "not a determined adversary. The architecture does not rely on them."),
         ],
         kicker="Security",
     )
@@ -540,7 +549,10 @@ def build(results: dict) -> Deck:
              "but that is not the isolation property."),
             ("Mandatory filtering in the store", "is what actually isolates. Default "
              "with no filter is ZERO documents, never all."),
-            ("Eviction is real:", "files and embeddings are both deleted at session end."),
+            ("Identity is scoped too:", "chunk ids include the session, so two users "
+             "uploading bill.pdf can never overwrite each other."),
+            ("Eviction is real:", "files, embeddings and cached search state are all "
+             "dropped at session end."),
         ],
         note="The failure mode I designed against is a caller who forgets to pass the "
              "filter. So I removed the ability to forget.",
@@ -557,6 +569,8 @@ def build(results: dict) -> Deck:
             ["Air-gapped", "uv pip download + fetch_models.py → nothing touches the network"],
             ["Containers", "Docker: 3 services, one image, weights as a volume"],
             ["Reproducible", "pyproject.toml + committed uv.lock (186 packages)"],
+            ["Models (CPU)", "Qwen3-4B-Instruct Q4 · MiniLM-L12 embeddings · Whisper-small "
+                             "int8 · Piper — Apache-2.0 / MIT / public domain"],
         ],
         col_widths=[2.6, 9.3],
     )
@@ -566,13 +580,18 @@ def build(results: dict) -> Deck:
         "A licensing finding",
         "jina-embeddings-v3 is CC-BY-NC-4.0. Non-commercial.",
         support=[
-            "It is the strongest multilingual embedder in the shortlist.",
-            "Same for jina-reranker-v2 and f5-tts-egyptian-arabic.",
+            "It is the strongest multilingual embedder in the shortlist. "
+            "jina-reranker-v2 and f5-tts-egyptian-arabic carry the same licence.",
             ("Replaced with BAAI/bge-m3 (MIT)", "— which also has ~20× the adoption. "
              "Zero cost to switch."),
-            ("Licence is a hard filter,", "checked before quality. A non-commercial "
-             "model in a customer-facing telecom assistant fails review for reasons "
-             "that have nothing to do with benchmark scores."),
+            ("Licence is a property of the training data, not the runtime:", "Piper is MIT, "
+             "but the Lessac-trained voice (research-only corpus) and Qwen2.5-3B (Qwen "
+             "Research licence) fail the same filter."),
+            ("Mechanical, not remembered:", "every model in a core slot is registered with "
+             "the licence from its own card, and a test fails if one is missing or "
+             "non-commercial."),
+            ("One open item:", "the Arabic voice's training-data licence is not stated — "
+             "to be cleared before commercial use."),
         ],
         warn=True,
     )
@@ -625,6 +644,13 @@ def build(results: dict) -> Deck:
             ["Per-document authentication", "Deliberately deferred — no login in the POC"],
             ["Visual retrieval without OCR", "Needs a second embedding space and a VLM"],
             ["Streaming WebSocket ASR", "Latency win, but not required for the demo"],
+            ["WER on recorded dialect clips", "Harness and protocol are ready; the clips are "
+                                              "not recorded"],
+            ["Calibrate the refusal gate; judge citation accuracy",
+             "Needs the deployment's own embedder and a judged answer set"],
+            ["Cleared Egyptian-dialect TTS voice", "The only Arabic Piper voice has an "
+                                                   "unverified licence"],
+            ["Background document ingestion", "Large uploads currently block their request"],
         ],
         col_widths=[5.0, 6.9],
     )
@@ -634,7 +660,7 @@ def build(results: dict) -> Deck:
         "Thank you",
         "The core runs offline on a CPU.  Every answer is cited.\n"
         "The model detects intent and nothing else — the backend decides what happens.\n\n"
-        "And the numbers in this deck came out of /metrics on the running system.",
+        "And the retrieval numbers in this deck came out of eval_rag.py, not a spreadsheet.",
         "Questions",
     )
 

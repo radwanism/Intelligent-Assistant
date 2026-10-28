@@ -30,6 +30,10 @@ Set-Location $root
 
 $python = Join-Path $root 'smart_assistant\Scripts\python.exe'
 
+# Always run THIS checkout's code. A venv created elsewhere and copied here keeps an
+# editable install pointing at the original directory; PYTHONPATH wins over that.
+$env:PYTHONPATH = Join-Path $root 'src'
+
 Write-Host "`n=== Telecom Egypt Assistant ===" -ForegroundColor Cyan
 
 # --- preflight ------------------------------------------------------------

@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 
 from rank_bm25 import BM25Okapi
@@ -38,6 +40,7 @@ log = logging.getLogger(__name__)
 
 RRF_K = 60           # standard RRF damping constant
 SESSION_BOOST = 1.15  # modest: never let an upload drown out te.eg entirely
+SESSION_TOKEN_CACHE = 16  # sessions whose tokenised uploads are kept warm
 
 
 @dataclass
@@ -91,6 +94,51 @@ class BM25Index:
         return [(cid, float(score)) for cid, score in ranked[:k] if score > 0.0]
 
 
+def bm25_scores(
+    query_tokens: list[str],
+    documents: list[list[str]],
+    *,
+    k1: float = 1.5,
+    b: float = 0.75,
+) -> list[float]:
+    """BM25 over a small, throwaway corpus — one session's uploads.
+
+    Not `rank_bm25`, because its classic IDF, log((N - n + 0.5) / (n + 0.5)), is
+    *negative* for any term that appears in more than half the documents. On a
+    shared knowledge base of hundreds of pages that never happens; on one
+    uploaded bill of two chunks it is the normal case, and every matching term
+    would score below zero and be discarded. This uses the Lucene form,
+    log(1 + (N - n + 0.5) / (n + 0.5)), which is always positive.
+    """
+    count = len(documents)
+    if not count or not query_tokens:
+        return [0.0] * count
+
+    lengths = [len(doc) for doc in documents]
+    average = (sum(lengths) / count) or 1.0
+    frequencies = [{} for _ in documents]
+    document_frequency: dict[str, int] = {}
+    for index, doc in enumerate(documents):
+        for token in doc:
+            frequencies[index][token] = frequencies[index].get(token, 0) + 1
+        for token in frequencies[index]:
+            document_frequency[token] = document_frequency.get(token, 0) + 1
+
+    scores: list[float] = []
+    for index in range(count):
+        total = 0.0
+        for token in set(query_tokens):
+            tf = frequencies[index].get(token, 0)
+            if not tf:
+                continue
+            n = document_frequency[token]
+            idf = math.log(1.0 + (count - n + 0.5) / (n + 0.5))
+            norm = tf + k1 * (1.0 - b + b * lengths[index] / average)
+            total += idf * tf * (k1 + 1.0) / norm
+        scores.append(total)
+    return scores
+
+
 def reciprocal_rank_fusion(
     rankings: list[list[str]], weights: list[float] | None = None, k: int = RRF_K
 ) -> dict[str, float]:
@@ -113,6 +161,48 @@ class HybridRetriever:
         self.settings = settings or get_settings()
         self.store = store or VectorStore(self.settings)
         self.bm25 = bm25 or BM25Index()
+        # session_id -> (chunk count when tokenised, chunks, tokens). Tokenising a
+        # large upload on every question would be wasted work; the count is the
+        # cheap staleness check, and the cap keeps ended sessions from piling up.
+        self._session_tokens: OrderedDict[
+            str, tuple[int, list[ScoredChunk], list[list[str]]]
+        ] = OrderedDict()
+        self._session_lock = threading.Lock()
+
+    def _session_sparse(self, query: str, session_id: str, k: int) -> list[ScoredChunk]:
+        """Lexical ranking over *this session's* uploads only.
+
+        Closes the gap where exact identifiers in the user's own document — a
+        reference number, a plan name — were matched by embedding similarity
+        alone. Scoped by `store.session_chunks`, which cannot be called without
+        a session id.
+        """
+        tokens = tokenize(query)
+        if not tokens:
+            return []
+        chunks = self.store.session_chunks(session_id)
+        if not chunks:
+            return []
+
+        with self._session_lock:
+            cached = self._session_tokens.get(session_id)
+            if cached is None or cached[0] != len(chunks):
+                documents = [tokenize(sc.chunk.text) for sc in chunks]
+                self._session_tokens[session_id] = (len(chunks), chunks, documents)
+                self._session_tokens.move_to_end(session_id)
+                while len(self._session_tokens) > SESSION_TOKEN_CACHE:
+                    self._session_tokens.popitem(last=False)
+            else:
+                _, chunks, documents = cached
+
+        scores = bm25_scores(tokens, documents)
+        ranked = sorted(zip(chunks, scores, strict=True), key=lambda p: p[1], reverse=True)
+        return [sc for sc, score in ranked[:k] if score > 0.0]
+
+    def forget_session(self, session_id: str) -> None:
+        """Drop a session's cached tokens (called when the session ends)."""
+        with self._session_lock:
+            self._session_tokens.pop(session_id, None)
 
     def warmup(self) -> None:
         """Build the sparse index from whatever is in the shared KB."""
@@ -134,6 +224,7 @@ class HybridRetriever:
         by_id: dict[str, ScoredChunk] = {sc.chunk.chunk_id: sc for sc in dense}
 
         session_hits: list[ScoredChunk] = []
+        session_sparse: list[ScoredChunk] = []
         if session_id:
             # Always the scoped API — there is no unscoped path (B.8).
             session_hits = self.store.search_session_docs(
@@ -141,6 +232,11 @@ class HybridRetriever:
             )
             for hit in session_hits:
                 by_id[hit.chunk.chunk_id] = hit
+            session_sparse = self._session_sparse(query, session_id, k=max(8, k // 3))
+            for hit in session_sparse:
+                # A lexical hit that dense search did not return still needs a
+                # place in the pool; one dense already scored keeps its cosine.
+                by_id.setdefault(hit.chunk.chunk_id, hit)
 
         # Sparse hits reference chunks we may not have fetched densely.
         missing = [cid for cid, _ in sparse if cid not in by_id]
@@ -155,6 +251,9 @@ class HybridRetriever:
             weights.append(1.0)
         if session_hits:
             rankings.append([sc.chunk.chunk_id for sc in session_hits])
+            weights.append(SESSION_BOOST)
+        if session_sparse:
+            rankings.append([sc.chunk.chunk_id for sc in session_sparse])
             weights.append(SESSION_BOOST)
 
         fused = reciprocal_rank_fusion(rankings, weights)
@@ -173,7 +272,7 @@ class HybridRetriever:
 
         return RetrievalResult(
             chunks=ordered[:k],
-            used_session_docs=bool(session_hits),
+            used_session_docs=bool(session_hits or session_sparse),
             dense_hits=len(dense),
             sparse_hits=len(sparse),
         )
@@ -188,8 +287,9 @@ class HybridRetriever:
             "ids": [raw["ids"]],
             "documents": [raw["documents"]],
             "metadatas": [raw["metadatas"]],
-            # No distance for a direct get; neutral similarity so RRF decides.
-            "distances": [[1.0] * len(raw["ids"])],
+            # No distance for a direct get: the chunk was found lexically and has
+            # no cosine to the query, so it must not be given one. RRF decides.
+            "distances": [[None] * len(raw["ids"])],
         }
         return _to_scored(shaped)
 
@@ -215,15 +315,35 @@ def diversify(chunks: list[ScoredChunk], *, max_per_url: int = 2) -> list[Scored
     return out
 
 
+LEXICAL_ONLY_CONFIDENCE = 0.5
+
+
 def confidence_of(chunks: list[ScoredChunk]) -> float:
-    """A rough retrieval-confidence signal in 0..1.
+    """How relevant is what was retrieved? 0..1, from real evidence of relevance.
 
     Feeds two things: the groundedness decision (refuse rather than guess when
-    nothing was retrieved) and the frustration detector, which treats repeated
-    low-confidence retrieval as evidence the user is stuck (B.6).
+    nothing relevant was found) and the frustration detector, which treats
+    repeated low-confidence retrieval as evidence the user is stuck (B.6).
+
+    This used to squash the *fused RRF score*. That score is 1/(60 + rank) summed
+    over lists, so it depends only on position: the top result scores about
+    1/61 whether it is a perfect match or complete nonsense, because dense search
+    always returns its k nearest neighbours however far away they are. The
+    resulting confidence never fell below ~0.45, so a refusal threshold of 0.18
+    could not be reached by any non-empty result. Confidence now comes from
+    signals that actually vary with relevance, best first:
+
+      1. the cross-encoder score, when the profile has a reranker (already 0..1);
+      2. otherwise the best raw cosine similarity among the chunks in play;
+      3. otherwise — every chunk was found only lexically — a fixed moderate
+         value, since an exact-term match is evidence but not a calibrated one.
     """
     if not chunks:
         return 0.0
-    top = chunks[0].rerank_score if chunks[0].rerank_score is not None else chunks[0].score
-    # RRF scores are small (~1/60); squash to something interpretable.
-    return 1.0 / (1.0 + math.exp(-((top * 60) - 1.2)))
+    reranked = [c.rerank_score for c in chunks if c.rerank_score is not None]
+    if reranked:
+        return max(0.0, min(1.0, max(reranked)))
+    dense = [c.dense_score for c in chunks if c.dense_score is not None]
+    if dense:
+        return max(0.0, min(1.0, max(dense)))
+    return LEXICAL_ONLY_CONFIDENCE

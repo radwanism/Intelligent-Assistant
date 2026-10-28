@@ -142,6 +142,27 @@ class VectorStore:
         log.info("evicted %d chunks for session %s", removed, session_id[:8])
         return removed
 
+    def session_chunks(self, session_id: str) -> list[ScoredChunk]:
+        """Every chunk one session has uploaded. Always scoped; never "all".
+
+        Feeds the per-session sparse index. Same rule as the dense path: a
+        missing session id is an error, not a request for everything.
+        """
+        if not session_id:
+            raise SessionScopeError(
+                "session_chunks requires a session_id; an unscoped read is never valid"
+            )
+        raw = self._sessions.get(
+            where={"session_id": session_id}, include=["documents", "metadatas"]
+        )
+        count = len(raw["ids"])
+        return _to_scored({
+            "ids": [raw["ids"]],
+            "documents": [raw["documents"]],
+            "metadatas": [raw["metadatas"]],
+            "distances": [[None] * count],
+        })
+
     def kb_size(self) -> int:
         return self._kb.count()
 
@@ -201,8 +222,15 @@ def _to_scored(result: dict[str, Any]) -> list[ScoredChunk]:
             page=meta.get("page"),
             section=meta.get("section"),
         )
+        if distance is None:
+            # Fetched by id (a lexical hit), never scored against the query.
+            out.append(ScoredChunk(chunk=chunk, score=0.0))
+            continue
         # Chroma returns cosine distance; convert to a similarity for fusion.
-        out.append(ScoredChunk(chunk=chunk, score=1.0 - float(distance), dense_rank=rank))
+        similarity = 1.0 - float(distance)
+        out.append(
+            ScoredChunk(chunk=chunk, score=similarity, dense_rank=rank, dense_score=similarity)
+        )
     return out
 
 

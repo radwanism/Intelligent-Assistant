@@ -86,7 +86,7 @@ gpu = [
     "transformers>=4.46",
     "sentence-transformers>=3.3",
     "FlagEmbedding>=1.3",          # BGE-M3 + bge-reranker-v2-m3
-    "autoawq>=0.2.7",              # Qwen3-8B-AWQ
+    "autoawq>=0.2.7",              # optional: only for AWQ checkpoints via TE_LLM_REPO; the default model is plain fp16
     "accelerate>=1.1",
 ]
 

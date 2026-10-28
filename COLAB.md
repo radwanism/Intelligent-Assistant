@@ -55,7 +55,7 @@ print("MISSING:", missing or "nothing — good")
 ```
 
 > **Do not install `.[cpu]` on Colab.** That extra carries `llama-cpp-python`, which the
-> GPU profile never loads (it uses transformers/AWQ) and which is the hardest package in
+> GPU profile never loads (it uses transformers, plain fp16) and which is the hardest package in
 > the project to build. Colab needs `.[gpu]` only.
 
 <details>
@@ -71,7 +71,7 @@ re-resolving:
     pydantic-settings tenacity huggingface-hub rapidocr-onnxruntime 2>&1 | tail -5
 
 !pip install -e . --no-deps 2>&1 | tail -3      # --no-deps skips the resolver
-!pip install FlagEmbedding accelerate autoawq 2>&1 | tail -3
+!pip install FlagEmbedding accelerate 2>&1 | tail -3     # autoawq is only needed for AWQ checkpoints
 ```
 </details>
 
@@ -275,8 +275,13 @@ tab, then:
 SESSION = "paste-session-id-here"
 httpx.post("http://127.0.0.1:8000/demo/grant",
            data={"session_id": SESSION, "customer_id": "cust-1001",
-                 "scope": "billing:read"})
+                 "scope": "billing:read"},
+           headers={"X-Agent-Token": AGENT_TOKEN})   # defined where the services start
 ```
+
+Granting permissions is an operator action, so the endpoint needs the operator token. The
+notebook sets `AGENT_TOKEN` (and `TE_AGENT_TOKEN`) before it starts the services; if you
+started them yourself, pass the value you exported, or read the one core logs at startup.
 
 Now ask about **the other** account:
 > `Check the bill balance for customer cust-1002`

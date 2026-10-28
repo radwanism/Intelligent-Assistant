@@ -27,6 +27,7 @@ import secrets
 import shutil
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -93,6 +94,17 @@ class SessionManager:
         self._sessions: dict[str, Session] = {}
         self._lock = threading.RLock()
         self._store = store  # VectorStore; injected to keep this module testable
+        self._end_hooks: list[Callable[[str], None]] = []
+
+    def on_end(self, hook: Callable[[str], None]) -> None:
+        """Register cleanup for anything else that caches a session's content.
+
+        The vector store and the upload directory are evicted here directly;
+        derived state held elsewhere (the retriever's tokenised copy of the
+        uploads) registers a hook so that "session ended" means *all* of it is
+        gone, not only the parts this class knows about.
+        """
+        self._end_hooks.append(hook)
 
     # -- lifecycle ---------------------------------------------------------
     def create(self) -> Session:
@@ -154,6 +166,11 @@ class SessionManager:
             shutil.rmtree(session.files_dir, ignore_errors=True)
         except Exception:
             log.exception("failed to remove files for %s", session_id[:8])
+        for hook in self._end_hooks:
+            try:
+                hook(session_id)
+            except Exception:
+                log.exception("session end hook failed for %s", session_id[:8])
         log.info("session ended %s", session_id[:8])
 
     def sweep(self) -> int:

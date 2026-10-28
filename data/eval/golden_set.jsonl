@@ -36,3 +36,13 @@
 {"question": "Tell me about WE Air packages", "language": "en", "expected_url_contains": ["/we-air"]}
 {"question": "عايز أعرف الـ 5G packages بكام", "language": "mixed", "expected_url_contains": ["/5g", "/nitro"]}
 {"question": "ازاي أعمل top up للخط؟", "language": "mixed", "expected_url_contains": ["/topup", "/about-te/faq", "/marhaba"]}
+{"question": "ما هو سعر الدولار اليوم؟", "language": "ar", "expected_url_contains": [], "expect_refusal": true, "note": "out of scope: nothing on te.eg answers this; the assistant should decline"}
+{"question": "What is the weather in Cairo tomorrow?", "language": "en", "expected_url_contains": [], "expect_refusal": true, "note": "out of scope: nothing on te.eg answers this; the assistant should decline"}
+{"question": "اكتبلي قصيدة عن الحب", "language": "arz", "expected_url_contains": [], "expect_refusal": true, "note": "out of scope: nothing on te.eg answers this; the assistant should decline"}
+{"question": "Who won the 2022 football World Cup?", "language": "en", "expected_url_contains": [], "expect_refusal": true, "note": "out of scope: nothing on te.eg answers this; the assistant should decline"}
+{"question": "عايز وصفة محشي كرنب", "language": "arz", "expected_url_contains": [], "expect_refusal": true, "note": "out of scope: nothing on te.eg answers this; the assistant should decline"}
+{"question": "What is the capital of Australia?", "language": "en", "expected_url_contains": [], "expect_refusal": true, "note": "out of scope: nothing on te.eg answers this; the assistant should decline"}
+{"question": "ترجم لي جملة صباح الخير للفرنسية", "language": "ar", "expected_url_contains": [], "expect_refusal": true, "note": "out of scope: nothing on te.eg answers this; the assistant should decline"}
+{"question": "How do I fix a flat tyre on my car?", "language": "en", "expected_url_contains": [], "expect_refusal": true, "note": "out of scope: nothing on te.eg answers this; the assistant should decline"}
+{"question": "ايه احسن لابتوب للألعاب؟", "language": "arz", "expected_url_contains": [], "expect_refusal": true, "note": "out of scope: nothing on te.eg answers this; the assistant should decline"}
+{"question": "Recommend a good recipe for pasta carbonara", "language": "en", "expected_url_contains": [], "expect_refusal": true, "note": "out of scope: nothing on te.eg answers this; the assistant should decline"}

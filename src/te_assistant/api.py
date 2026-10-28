@@ -13,13 +13,14 @@ unaffected. That is the degradation contract from the plan.
 from __future__ import annotations
 
 import logging
+import secrets
 import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
 from .config import get_settings
@@ -40,6 +41,23 @@ def get_services() -> Services:
     if _services is None:  # pragma: no cover - startup ordering guard
         raise RuntimeError("services not initialised")
     return _services
+
+
+def require_agent(
+    x_agent_token: str = Header(default=""),
+    services: Services = Depends(get_services),
+) -> None:
+    """Gate for operator-only endpoints.
+
+    A session token is a capability over *one* session's own data. These
+    endpoints cross sessions (the agent queue) or mint permissions (demo
+    grants), so possession of a session must never be enough to reach them.
+    Compared in constant time; an unset token can never match, because the
+    services always hold one.
+    """
+    supplied = x_agent_token.encode("utf-8")
+    if not secrets.compare_digest(supplied, services.agent_token.encode("utf-8")):
+        raise HTTPException(status_code=401, detail="agent token required")
 
 
 def _sweep_loop(services: Services, stop: threading.Event) -> None:
@@ -68,6 +86,14 @@ async def lifespan(app: FastAPI):
         target=_sweep_loop, args=(_services, stop), daemon=True, name="session-sweeper"
     )
     thread.start()
+
+    if _services.agent_token_generated:
+        # Printed once, like a notebook server's token: the operator needs it
+        # for /handoffs and /demo/grant, and set TE_AGENT_TOKEN to choose it.
+        log.warning(
+            "operator token for /handoffs and /demo/grant (header X-Agent-Token): %s",
+            _services.agent_token,
+        )
 
     log.info(
         "core ready: profile=%s, kb_chunks=%d",
@@ -242,26 +268,30 @@ def session_metrics(
     return {"session_id": session_id, "metrics": METRICS.session(session_id)}
 
 
-@app.get("/handoffs")
+@app.get("/handoffs", dependencies=[Depends(require_agent)])
 def pending_handoffs(services: Services = Depends(get_services)) -> dict[str, object]:
-    """What a human agent's queue would read."""
+    """What a human agent's queue would read. Operator-only: it spans sessions."""
     tickets = services.handoffs.pending()
     return {"count": len(tickets), "tickets": [t.model_dump(mode="json") for t in tickets]}
 
 
-@app.post("/demo/grant")
+@app.post("/demo/grant", dependencies=[Depends(require_agent)])
 def demo_grant(
     session_id: str = Form(...),
     customer_id: str = Form(default="cust-1001"),
     scope: str = Form(default="billing:read"),
     services: Services = Depends(get_services),
 ) -> dict[str, str]:
-    """Bind a demo account to a session.
+    """Bind a demo account to a session. Operator-only.
 
     Stands in for the authenticated login that a production system would have.
     It exists so the permission check in B.4 is exercised against a real grant
     rather than mocked away — and so the demo can show the *refused* case by
     simply not calling this.
+
+    It mints permissions, so it sits behind the operator token: an open grant
+    endpoint would be a back door through the very model the permission check
+    enforces.
     """
     services.db.grant(session_id, customer_id, scope)
     return {"status": "granted", "customer_id": customer_id, "scope": scope}

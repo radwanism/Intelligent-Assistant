@@ -60,10 +60,15 @@ class Chunk(BaseModel):
 
 class ScoredChunk(BaseModel):
     chunk: Chunk
-    score: float
+    score: float                      # the *fused* rank score once retrieval has run
     dense_rank: int | None = None
     bm25_rank: int | None = None
     rerank_score: float | None = None
+    # Raw cosine similarity to the query, kept separately because `score` is
+    # overwritten by fusion. Reciprocal-rank scores depend only on position, so
+    # they say nothing about whether a chunk is actually relevant; this does.
+    # None for chunks that were found lexically and never scored densely.
+    dense_score: float | None = None
 
 
 class Citation(BaseModel):

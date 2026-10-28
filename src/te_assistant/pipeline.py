@@ -21,6 +21,8 @@ than estimated.
 from __future__ import annotations
 
 import logging
+import os
+import secrets
 import time
 import uuid
 from dataclasses import dataclass
@@ -35,12 +37,13 @@ from .llm.client import get_llm
 from .llm.generate import generate_answer
 from .llm.intent import detect_intent
 from .monitoring.metrics import METRICS
-from .retrieval.hybrid import HybridRetriever, diversify
+from .retrieval.context import select_context
+from .retrieval.hybrid import HybridRetriever
 from .retrieval.normalize_ar import detect_language, response_language
-from .retrieval.rerank import get_reranker
 from .schemas import (
     ChatRequest,
     ChatResponse,
+    Citation,
     IntentName,
     Language,
     StageTimings,
@@ -51,6 +54,42 @@ from .security.permissions import PermissionChecker
 from .session.manager import SessionManager
 
 log = logging.getLogger(__name__)
+
+
+LLM_RETRY_SECONDS = 30.0
+
+
+class _UnavailableLLM:
+    """Stands in for a model that could not be loaded.
+
+    Every call fails the way a broken model would, so the existing fallbacks do
+    their job unchanged: intent detection degrades to the read-only path and
+    generation degrades to quoting the retrieved passages. Retrieval, guardrails,
+    masking, sessions, handoff and the audit trail never needed the model.
+    """
+
+    def generate(self, *args, **kwargs) -> str:
+        raise RuntimeError("language model unavailable")
+
+    def stream(self, *args, **kwargs):
+        raise RuntimeError("language model unavailable")
+
+
+def _llm_or_unavailable(services: Services):
+    """The model, or a stand-in when it cannot be loaded.
+
+    A failed load is not retried on every turn — each attempt can take seconds on
+    CPU — but after a short back-off, so a model that appears (a file finishes
+    copying, memory frees up) is picked up without a restart.
+    """
+    if time.monotonic() < services.llm_retry_at:
+        return _UnavailableLLM()
+    try:
+        return get_llm(services.settings)
+    except Exception:
+        log.exception("language model could not be loaded; degrading to retrieval-only")
+        services.llm_retry_at = time.monotonic() + LLM_RETRY_SECONDS
+        return _UnavailableLLM()
 
 
 def _emit(services: Services, record: TurnRecord) -> None:
@@ -88,14 +127,23 @@ class Services:
     actions: ActionRegistry
     handoffs: HandoffQueue
     records: RecordStore
+    # Credential for the operator-only endpoints (agent queue, demo grants).
+    # Sessions are anonymous capabilities and must never be able to reach these.
+    agent_token: str = ""
+    agent_token_generated: bool = False
+    # When the model last failed to load, and so when to try again. Per-instance
+    # state, not a module global, so one failure cannot leak into another run.
+    llm_retry_at: float = 0.0
 
     @classmethod
     def build(cls, settings: Settings | None = None) -> Services:
         settings = settings or get_settings()
         retriever = HybridRetriever(settings=settings)
         sessions = SessionManager(settings=settings, store=retriever.store)
+        sessions.on_end(retriever.forget_session)
         db = ActionDB(settings.sqlite_path)
         db.seed()
+        configured = os.getenv("TE_AGENT_TOKEN", "").strip()
         return cls(
             settings=settings,
             sessions=sessions,
@@ -105,6 +153,8 @@ class Services:
             actions=ActionRegistry(db),
             handoffs=HandoffQueue(),
             records=RecordStore(settings.traces_path),
+            agent_token=configured or secrets.token_urlsafe(24),
+            agent_token_generated=not configured,
         )
 
     def warmup(self) -> None:
@@ -154,7 +204,7 @@ def handle_turn(services: Services, request: ChatRequest) -> ChatResponse:
     record.pii_types_masked = masked.found
     question_for_model = masked.masked_text
 
-    llm = get_llm(settings)
+    llm = _llm_or_unavailable(services)
 
     # -- 3. intent detection ------------------------------------------------
     intent = detect_intent(llm, question_for_model)
@@ -218,13 +268,16 @@ def handle_turn(services: Services, request: ChatRequest) -> ChatResponse:
     )
     timings.retrieval_ms = timer.lap()
 
-    candidates = diversify(retrieval.chunks)
-    reranker = get_reranker(settings)
-    if reranker is not None and candidates:
-        candidates = reranker.rerank(question_for_model, candidates, top_k=settings.rerank_k)
+    selection = select_context(question_for_model, retrieval.chunks, settings)
+    candidates = selection.chunks
+    if selection.reranked:
         timings.rerank_ms = timer.lap()
-    else:
-        candidates = candidates[: settings.rerank_k]
+
+    # Retrieved passages from the customer's own documents carry the same kind
+    # of sensitive values the question was just stripped of. Mask them before
+    # they are put into a prompt, continuing the question's numbering so one
+    # mapping unmasks the whole answer.
+    candidates, passage_mapping = pii.mask_chunks(candidates, masked.mapping)
 
     answer_obj = generate_answer(
         llm,
@@ -234,6 +287,7 @@ def handle_turn(services: Services, request: ChatRequest) -> ChatResponse:
         history=session.history.as_messages(),
         max_tokens=settings.max_answer_tokens,
         temperature=settings.temperature,
+        min_confidence=settings.min_retrieval_confidence,
     )
     timings.generation_ms = timer.lap()
 
@@ -246,7 +300,10 @@ def handle_turn(services: Services, request: ChatRequest) -> ChatResponse:
         answer_obj.grounded = False
 
     # -- 7. unmask for display ----------------------------------------------
-    text = pii.unmask(text, masked.mapping)
+    text = pii.unmask(text, passage_mapping)
+    # The user sees their own document restored; the persisted record keeps the
+    # masked form, because the trace file outlives the session.
+    shown_citations = [_unmask_citation(c, passage_mapping) for c in answer_obj.citations]
 
     record.grounded = answer_obj.grounded
     record.citations = answer_obj.citations
@@ -292,7 +349,7 @@ def handle_turn(services: Services, request: ChatRequest) -> ChatResponse:
         _emit(services, record)
         return ChatResponse(
             answer=text,
-            citations=answer_obj.citations,
+            citations=shown_citations,
             language=detected,
             record=record,
             handoff=ticket,
@@ -300,10 +357,10 @@ def handle_turn(services: Services, request: ChatRequest) -> ChatResponse:
 
     timings.total_ms = _total(timings)
     record.timings = timings
-    services.records.add(record)
+    _emit(services, record)
 
     return ChatResponse(
-        answer=text, citations=answer_obj.citations, language=detected, record=record
+        answer=text, citations=shown_citations, language=detected, record=record
     )
 
 
@@ -327,10 +384,21 @@ def _escalate(
     record.timings = timings
     session.history.add("user", request.message)
     session.history.add("assistant", answer)
-    services.records.add(record)
+    _emit(services, record)
     return ChatResponse(
         answer=answer, citations=[], language=detected, record=record, handoff=ticket
     )
+
+
+def _unmask_citation(citation: Citation, mapping: dict[str, str]) -> Citation:
+    """Restore a citation's display fields. Returns a copy."""
+    if not mapping:
+        return citation
+    return citation.model_copy(update={
+        "title": pii.unmask(citation.title, mapping),
+        "snippet": pii.unmask(citation.snippet, mapping),
+        "doc_name": pii.unmask(citation.doc_name, mapping) if citation.doc_name else None,
+    })
 
 
 def _refusal_for(reason: str, arabic: bool) -> str:

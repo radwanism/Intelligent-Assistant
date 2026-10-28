@@ -36,9 +36,23 @@ log = logging.getLogger(__name__)
 PIPER_VOICES_REPO = "rhasspy/piper-voices"
 
 # Where each voice lives inside the Hub repo.
+#
+# Licences are a property of the *training data*, not of Piper (which is MIT),
+# so each voice is checked against its own MODEL_CARD:
+#
+#   en_US-ljspeech-medium  public domain (LJ Speech) — fine for commercial use.
+#   ar_JO-kareem-medium    UNVERIFIED. Its card says "License: See URL" and the
+#                          dataset repo it points at states no licence at all.
+#                          It is the only Arabic voice Piper ships, so it stays
+#                          for the POC — but it must be cleared with the dataset
+#                          owner (or replaced) before any commercial deployment.
+#
+# en_US-lessac-medium was removed: it is trained on the Lessac Blizzard 2013
+# corpus, whose licence is research-only and explicitly excludes voice synthesis
+# products.
 VOICE_PATHS: dict[str, str] = {
     "ar_JO-kareem-medium": "ar/ar_JO/kareem/medium/ar_JO-kareem-medium.onnx",
-    "en_US-lessac-medium": "en/en_US/lessac/medium/en_US-lessac-medium.onnx",
+    "en_US-ljspeech-medium": "en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx",
 }
 
 CITATION_MARKER = re.compile(r"\[\d{1,2}\]")

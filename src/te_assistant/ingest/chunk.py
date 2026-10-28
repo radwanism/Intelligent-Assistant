@@ -191,13 +191,21 @@ def chunks_from_document(
     pieces = split_text(
         text, max_tokens=max_tokens, overlap_tokens=overlap_tokens, min_chars=min_chars
     )
+    # The id must be unique per *session* for uploads: two users uploading
+    # `bill.pdf` share a filename, page and index, and the store writes with an
+    # upsert, so without the session in the id the second upload silently
+    # replaces the first — text and session_id both. Shared KB chunks carry no
+    # session, so their ids are unchanged and the committed index stays valid.
+    scope = [session_id] if session_id else []
     out: list[Chunk] = []
     for piece in pieces:
         header = " — ".join(part for part in (title, piece.section) if part)
         body = f"{header}\n{piece.text}" if header else piece.text
         out.append(
             Chunk(
-                chunk_id=chunk_id_for(url or doc_name or "", str(page or 0), str(piece.index)),
+                chunk_id=chunk_id_for(
+                    *scope, url or doc_name or "", str(page or 0), str(piece.index)
+                ),
                 text=body,
                 title=title,
                 url=url,

@@ -1,0 +1,8 @@
+{"audio": "arz_clean_01.wav", "reference": "عايز أعرف أسعار باقات الإنترنت", "dialect": "arz", "condition": "clean"}
+{"audio": "arz_clean_02.wav", "reference": "ازاي أشحن رصيد الخط بتاعي", "dialect": "arz", "condition": "clean"}
+{"audio": "arz_noisy_01.wav", "reference": "عايز أعرف رصيدي كام", "dialect": "arz", "condition": "noisy"}
+{"audio": "arz_noisy_02.wav", "reference": "النت فاصل عندي من امبارح", "dialect": "arz", "condition": "noisy"}
+{"audio": "msa_clean_01.wav", "reference": "ما هي باقات الإنترنت المنزلي المتاحة", "dialect": "ar", "condition": "clean"}
+{"audio": "en_clean_01.wav", "reference": "How do I recharge my line", "dialect": "en", "condition": "clean"}
+{"audio": "en_noisy_01.wav", "reference": "What are the five g plans", "dialect": "en", "condition": "noisy"}
+{"audio": "silence_01.wav", "reference": "", "dialect": "ar", "condition": "silence"}

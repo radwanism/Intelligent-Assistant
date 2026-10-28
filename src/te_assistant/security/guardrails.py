@@ -8,7 +8,7 @@ model's instructions.
 Scope is deliberately narrow. This is pattern matching, not a classifier:
 
   * On CPU, a guardrail model would cost more than the answer itself.
-  * Pattern matching is auditable and testable — `tests/test_guardrails.py`
+  * Pattern matching is auditable and testable — `tests/test_security.py`
     asserts each rule, which is what makes this a security control rather
     than a vibe.
 

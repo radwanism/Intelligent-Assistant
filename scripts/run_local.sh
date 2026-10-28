@@ -21,6 +21,10 @@ cd "$ROOT"
 PYTHON="$ROOT/smart_assistant/bin/python"
 [[ -x "$PYTHON" ]] || PYTHON="$(command -v python3)"
 
+# Always run THIS checkout's code. A venv created elsewhere and copied here keeps an
+# editable install pointing at the original directory; PYTHONPATH wins over that.
+export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+
 SKIP_SPEECH=0
 for arg in "$@"; do
     case "$arg" in
